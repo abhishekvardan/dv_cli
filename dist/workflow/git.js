@@ -84,13 +84,40 @@ export function hasScript(name, cwd = process.cwd()) {
  * progress display and leaving no trace of what broke.
  */
 export function run(command, args, cwd = process.cwd()) {
-    // npm and friends are .cmd shims on Windows. Naming the shim directly beats
-    // `shell: true`, which concatenates arguments unescaped — a real injection risk
-    // and something Node now warns about.
-    const bin = process.platform === 'win32' && !/[.](exe|cmd|bat)$/i.test(command) ? `${command}.cmd` : command;
-    const result = spawnSync(bin, args, { cwd, encoding: 'utf8' });
+    // Windows needs a shell here and there is no way around it: `npm` is a `.cmd` shim,
+    // and since the CVE-2024-27980 fix Node refuses to spawn `.cmd` without one, while
+    // bare `npm` is simply not an executable. Passing the command as a single
+    // pre-quoted string rather than a string plus an args array is what avoids the
+    // unescaped-concatenation problem Node warns about.
+    const useShell = process.platform === 'win32';
+    const result = useShell
+        ? spawnSync([command, ...args.map(shellQuote)].join(' '), {
+            cwd,
+            encoding: 'utf8',
+            shell: true,
+        })
+        : spawnSync(command, args, { cwd, encoding: 'utf8' });
+    // A failure to launch sets `error` and leaves status null. Without this the caller
+    // reports an empty message and the real cause — a missing binary — is invisible.
+    if (result.error) {
+        const code = result.error.code;
+        return {
+            ok: false,
+            output: code === 'ENOENT'
+                ? `${command} is not installed, or not on PATH.`
+                : `could not run ${command}: ${result.error.message}`,
+        };
+    }
     const output = `${result.stdout ?? ''}${result.stderr ?? ''}`.trim();
     return { ok: result.status === 0, output };
+}
+/** Quote an argument for a shell, leaving simple ones alone so output stays readable. */
+function shellQuote(arg) {
+    if (/^[A-Za-z0-9_@:./=-]+$/.test(arg))
+        return arg;
+    return process.platform === 'win32'
+        ? `"${arg.replace(/"/g, '""')}"`
+        : `'${arg.replace(/'/g, `'''`)}'`;
 }
 /** The last few meaningful lines of command output, for an error message. */
 export function tail(output, lines = 6) {
