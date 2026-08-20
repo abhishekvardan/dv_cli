@@ -225,7 +225,7 @@ function steps(): Step<ShipContext>[] {
       name: 'Deployment ready',
       skip: (ctx) => {
         if (negated(ctx.flags, 'deploy')) return 'skipped by flag';
-        if (!ctx.project) return 'no Vercel project (use --project)';
+        if (!ctx.project) return 'not linked - run dv vercel link';
         return false;
       },
       async run(ctx) {
