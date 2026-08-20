@@ -59,6 +59,11 @@ export function githubRemote(remote = 'origin', cwd = process.cwd()): string | n
   return https ? `${https[1]}/${https[2]}` : null;
 }
 
+/** Whether a remote is configured at all — separate from whether it is a GitHub one. */
+export function hasRemote(name = 'origin', cwd = process.cwd()): boolean {
+  return git(['remote', 'get-url', name], cwd).ok;
+}
+
 export function hasUpstream(branch: string, cwd = process.cwd()): boolean {
   return git(['rev-parse', '--abbrev-ref', `${branch}@{upstream}`], cwd).ok;
 }

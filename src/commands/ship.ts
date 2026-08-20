@@ -23,6 +23,7 @@ import {
   dirtyFiles,
   git,
   githubRemote,
+  hasRemote,
   hasScript,
   headSha,
   isRepo,
@@ -119,7 +120,13 @@ function steps(): Step<ShipContext>[] {
 
     {
       name: 'Pushed to origin',
-      skip: (ctx) => (negated(ctx.flags, 'push') ? 'skipped by flag' : false),
+      skip: (ctx) => {
+        if (negated(ctx.flags, 'push')) return 'skipped by flag';
+        // Checked here rather than discovered from git's output: "no remote" is a
+        // state of this repository, not a failure of the push.
+        if (!hasRemote('origin', ctx.cwd)) return 'no origin remote';
+        return false;
+      },
       async run(ctx) {
         const ahead = unpushedCount(ctx.branch, ctx.cwd);
         if (ahead === 0) return `${ctx.branch} already up to date`;
@@ -312,10 +319,11 @@ export async function shipCommand(args: ParsedArgs): Promise<void> {
     branch: currentBranch(cwd),
     sha: headSha(cwd),
     repo: str(args.flags, 'repo') ?? githubRemote('origin', cwd),
-    // `.vercel/project.json` is authoritative; the package name is a last resort and
-    // is frequently the template's name rather than the real project's.
-    project:
-      str(args.flags, 'project', 'p') ?? linkedVercelProject(cwd) ?? readPackageJson(cwd)?.name,
+    // Only an explicit flag or a real link counts. The package name was tried here
+    // once and is worse than nothing: it is usually the template's name, and being
+    // truthy it silently suppressed the offer to link while guaranteeing the deploy
+    // step would fail looking for a project that does not exist.
+    project: str(args.flags, 'project', 'p') ?? linkedVercelProject(cwd) ?? undefined,
     flags: args.flags,
   };
 
