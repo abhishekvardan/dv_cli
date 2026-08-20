@@ -28,7 +28,6 @@ import {
   headSha,
   isRepo,
   linkedVercelProject,
-  readPackageJson,
   runAsync,
   tail,
   unpushedCount,
