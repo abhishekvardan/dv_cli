@@ -1,0 +1,48 @@
+{
+  "name": "@abhishekvardanbotta/dv",
+  "version": "0.1.0",
+  "description": "One CLI for GitHub, Gmail, Calendar, LinkedIn and Vercel — with OAuth built in.",
+  "type": "module",
+  "bin": {
+    "dv": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "cli",
+    "github",
+    "gmail",
+    "linkedin",
+    "oauth",
+    "dv"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.2.4"
+  },
+  "peerDependencies": {
+    "@abhishekvardanbotta/kiln": ">=0.4.0"
+  },
+  "peerDependenciesMeta": {
+    "@abhishekvardanbotta/kiln": {
+      "optional": true
+    }
+  }
+}
