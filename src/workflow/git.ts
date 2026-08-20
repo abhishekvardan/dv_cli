@@ -7,7 +7,7 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { CliError, EXIT } from '../cli/errors.js';
@@ -106,6 +106,37 @@ export function linkedVercelProject(cwd = process.cwd()): string | null {
   }
 }
 
+export interface VercelLink {
+  orgId: string;
+  projectId: string;
+  projectName?: string;
+}
+
+/**
+ * Record which Vercel project this directory deploys to.
+ *
+ * Deliberately the same file and shape `vercel link` writes, so the official CLI reads
+ * ours and vice versa. Inventing a private format would mean a project could be linked
+ * for one tool and not the other, which is exactly the confusion this avoids.
+ */
+export function writeVercelLink(link: VercelLink, cwd = process.cwd()): string {
+  const dir = join(cwd, '.vercel');
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, 'project.json');
+  writeFileSync(path, `${JSON.stringify(link, null, 2)}
+`, 'utf8');
+
+  // `.vercel` holds ids tied to your account and should not be committed. The Vercel
+  // CLI does the same thing on link.
+  const ignorePath = join(cwd, '.gitignore');
+  const existing = existsSync(ignorePath) ? readFileSync(ignorePath, 'utf8') : '';
+  if (!/^\.vercel\/?\s*$/m.test(existing)) {
+    const prefix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
+    writeFileSync(ignorePath, `${existing}${prefix}.vercel\n`, 'utf8');
+  }
+  return path;
+}
+
 export function hasScript(name: string, cwd = process.cwd()): boolean {
   return Boolean(readPackageJson(cwd)?.scripts?.[name]);
 }
@@ -162,6 +193,31 @@ function shellQuote(arg: string): string {
 }
 
 
+/**
+ * End a process and everything it started.
+ *
+ * `child.kill()` is not enough. On Windows with a shell it kills the shell, leaving
+ * the build running and holding the pipes open — so a "timeout" reported at 2s while
+ * the process happily continued for another 28. On POSIX the child is spawned into
+ * its own process group so the whole group can be signalled at once.
+ */
+function killTree(pid: number | undefined): void {
+  if (!pid) return;
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
+    return;
+  }
+  try {
+    process.kill(-pid, 'SIGTERM');
+  } catch {
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
 export interface RunAsyncOptions {
   cwd?: string;
   /** Kill the child after this long. A build with no ceiling hangs the workflow forever. */
@@ -200,10 +256,29 @@ export function runAsync(
           // instead of waiting for an answer nobody can give.
           stdio: ['ignore', 'pipe', 'pipe'],
         })
-      : spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      // Its own process group, so a timeout can signal the whole tree rather than
+      // just the immediate child.
+      : spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
 
     let output = '';
     let timedOut = false;
+    let settled = false;
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        ok: !timedOut && exitCode === 0,
+        timedOut,
+        output: timedOut
+          ? `${output.trim()}
+
+timed out after ${Math.round(timeoutMs / 1000)}s`.trim()
+          : output.trim(),
+      });
+    };
+    let exitCode: number | null = null;
     const collect = (chunk: Buffer) => {
       const text = chunk.toString('utf8');
       output += text;
@@ -212,15 +287,18 @@ export function runAsync(
     child.stdout?.on('data', collect);
     child.stderr?.on('data', collect);
 
-    const timer = setTimeout(() => {
+    const timer: NodeJS.Timeout = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGTERM');
-      // SIGTERM is a request. Something wedged needs SIGKILL.
-      setTimeout(() => child.kill('SIGKILL'), 5000).unref();
+      killTree(child.pid);
+      // Resolved here rather than waiting for 'close': a wedged process may never
+      // close its pipes, and the workflow must not wait on one that already timed out.
+      finish();
     }, timeoutMs);
     timer.unref();
 
     child.on('error', (err: NodeJS.ErrnoException) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       resolve({
         ok: false,
@@ -233,16 +311,8 @@ export function runAsync(
     });
 
     child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({
-        ok: code === 0 && !timedOut,
-        timedOut,
-        output: timedOut
-          ? `${output.trim()}
-
-timed out after ${Math.round(timeoutMs / 1000)}s`.trim()
-          : output.trim(),
-      });
+      exitCode = code;
+      finish();
     });
   });
 }

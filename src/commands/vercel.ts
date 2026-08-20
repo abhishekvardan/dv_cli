@@ -7,8 +7,9 @@
 import { UsageError } from '../cli/errors.js';
 import { bool, num, str, type ParsedArgs } from '../cli/args.js';
 import { describeShape, resolveCommand, type CommandShape } from '../cli/dispatch.js';
-import { c, confirm, info, json, out, relative, success, table } from '../cli/ui.js';
+import { c, confirm, info, json, out, relative, select, success, table } from '../cli/ui.js';
 import { vercel } from '../api/vercel.js';
+import { writeVercelLink } from '../workflow/git.js';
 
 const SHAPE: CommandShape = {
   verbs: {
@@ -17,7 +18,7 @@ const SHAPE: CommandShape = {
     env: ['list', 'add', 'rm'],
     domain: ['list', 'add', 'rm'],
   },
-  standalone: ['whoami'],
+  standalone: ['whoami', 'link'],
   aliases: {
     projects: ['project', 'list'],
     deployments: ['deploy', 'list'],
@@ -45,6 +46,68 @@ function projectName(rest: string[], args: ParsedArgs, hint: string): string {
   const name = rest[0] ?? str(args.flags, 'project', 'p');
   if (!name) throw new UsageError('Which project?', hint);
   return name;
+}
+
+/**
+ * Link this directory to a Vercel project, without needing the Vercel CLI.
+ *
+ * Called from `dv vercel link` and from `dv ship` when nothing is linked yet — being
+ * told to go and install another tool mid-deploy is the wrong answer when the CLI is
+ * already authenticated and can just ask.
+ */
+export async function linkProject(
+  args: ParsedArgs,
+  cwd = process.cwd(),
+): Promise<{ projectId: string; projectName: string }> {
+  const projects = await vercel.projects(100);
+  if (projects.length === 0) {
+    throw new UsageError(
+      'No Vercel projects on this account.',
+      'dv vercel project create my-app --repo owner/name',
+    );
+  }
+
+  const wanted = str(args.flags, 'project', 'p') ?? args.positional[0];
+  let chosen = wanted ? projects.find((p: any) => p.name === wanted || p.id === wanted) : undefined;
+
+  if (wanted && !chosen) {
+    throw new UsageError(
+      `No Vercel project "${wanted}".`,
+      `Yours are: ${projects.slice(0, 10).map((p: any) => p.name).join(', ')}`,
+    );
+  }
+
+  if (!chosen) {
+    if (!process.stdin.isTTY) {
+      throw new UsageError(
+        'Which Vercel project should this link to?',
+        `dv vercel link --project <name>
+Yours are: ${projects
+          .slice(0, 10)
+          .map((p: any) => p.name)
+          .join(', ')}`,
+      );
+    }
+    // Most recently updated first — the one you are working on is usually near the top.
+    const ordered = [...projects].sort((a: any, b: any) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+    chosen = await select(
+      'Which Vercel project does this directory deploy to?',
+      ordered.slice(0, 20).map((p: any, i: number) => ({
+        value: p,
+        label: p.name,
+        detail: p.framework ?? undefined,
+        recommended: i === 0,
+      })),
+    );
+  }
+
+  const path = writeVercelLink(
+    { orgId: chosen.accountId, projectId: chosen.id, projectName: chosen.name },
+    cwd,
+  );
+  success(`Linked to ${c.bold(chosen.name)}`);
+  info(c.dim(`  ${path}`));
+  return { projectId: chosen.id, projectName: chosen.name };
 }
 
 export async function vercelCommand(args: ParsedArgs): Promise<void> {
@@ -305,6 +368,11 @@ export async function vercelCommand(args: ParsedArgs): Promise<void> {
       if (!ok) return info('Not removed.');
       await vercel.removeDomain(project, domain);
       success(`Removed ${domain}.`);
+      return;
+    }
+
+    case 'link': {
+      await linkProject(args);
       return;
     }
 

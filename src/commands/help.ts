@@ -67,6 +67,7 @@ const SECTIONS: Array<{ title: string; rows: Array<[string, string]> }> = [
   {
     title: 'Vercel',
     rows: [
+      ['dv vercel link', 'Link this folder to a project (asks which)'],
       ['dv vercel project list', 'Your projects'],
       ['dv vercel project view <name>', 'One project in detail'],
       ['dv vercel project create <name>', 'New project, optionally --repo owner/name'],

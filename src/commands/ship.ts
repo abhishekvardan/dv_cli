@@ -34,6 +34,7 @@ import {
 } from '../workflow/git.js';
 import { github } from '../api/github.js';
 import { vercel } from '../api/vercel.js';
+import { linkProject } from './vercel.js';
 
 interface ShipContext {
   cwd: string;
@@ -234,7 +235,7 @@ function steps(): Step<ShipContext>[] {
           throw new Error(
             `no Vercel project "${ctx.project}"` +
               (names.length ? ` - yours are: ${names.slice(0, 8).join(', ')}` : '') +
-              '. Pass --project <name>, or run `vercel link` here.',
+              '. Run `dv vercel link` here, or pass --project <name>.',
           );
         }
 
@@ -319,6 +320,18 @@ export async function shipCommand(args: ParsedArgs): Promise<void> {
   };
 
   const dryRun = bool(args.flags, 'dry-run');
+
+  // Resolve the Vercel project up front. Doing it inside the workflow would mean a
+  // prompt drawing over the progress display, and it is better to settle everything
+  // interactive before the long-running steps begin.
+  if (!dryRun && !negated(args.flags, 'deploy') && !ctx.project) {
+    if (process.stdin.isTTY) {
+      info('');
+      info(c.dim('  This directory is not linked to a Vercel project yet.'));
+      const linked = await linkProject(args, cwd).catch(() => null);
+      if (linked) ctx.project = linked.projectId;
+    }
+  }
 
   if (!dryRun) {
     info('');
