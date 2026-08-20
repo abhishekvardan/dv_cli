@@ -84,12 +84,11 @@ export function hasScript(name, cwd = process.cwd()) {
  * progress display and leaving no trace of what broke.
  */
 export function run(command, args, cwd = process.cwd()) {
-    const result = spawnSync(command, args, {
-        cwd,
-        encoding: 'utf8',
-        // npm and friends are .cmd shims on Windows and are not directly executable.
-        shell: process.platform === 'win32',
-    });
+    // npm and friends are .cmd shims on Windows. Naming the shim directly beats
+    // `shell: true`, which concatenates arguments unescaped — a real injection risk
+    // and something Node now warns about.
+    const bin = process.platform === 'win32' && !/[.](exe|cmd|bat)$/i.test(command) ? `${command}.cmd` : command;
+    const result = spawnSync(bin, args, { cwd, encoding: 'utf8' });
     const output = `${result.stdout ?? ''}${result.stderr ?? ''}`.trim();
     return { ok: result.status === 0, output };
 }

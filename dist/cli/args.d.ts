@@ -42,3 +42,11 @@ export declare function unknownFlags(flags: ParsedArgs['flags'], allowed: string
  * never to file paths, where a real Windows path is what the user means.
  */
 export declare function unmanglePath(value: string): string;
+/**
+ * Whether a `--no-x` style flag was given.
+ *
+ * The parser normalises `--no-push` into `push: false`, so asking for a flag literally
+ * named "no-push" always answers false and the negation is silently ignored. Both
+ * spellings are accepted here because both are natural to type.
+ */
+export declare function negated(flags: ParsedArgs['flags'], name: string): boolean;

@@ -183,4 +183,17 @@ export function unmanglePath(value) {
         return '/';
     return value;
 }
+/**
+ * Whether a `--no-x` style flag was given.
+ *
+ * The parser normalises `--no-push` into `push: false`, so asking for a flag literally
+ * named "no-push" always answers false and the negation is silently ignored. Both
+ * spellings are accepted here because both are natural to type.
+ */
+export function negated(flags, name) {
+    if (flags[name] === false)
+        return true;
+    const explicit = flags[`no-${name}`];
+    return explicit === true || explicit === 'true';
+}
 //# sourceMappingURL=args.js.map

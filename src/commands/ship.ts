@@ -15,7 +15,7 @@
  */
 
 import { UsageError } from '../cli/errors.js';
-import { bool, num, str, type ParsedArgs } from '../cli/args.js';
+import { bool, negated, num, str, type ParsedArgs } from '../cli/args.js';
 import { c, confirm, info, json, out, success } from '../cli/ui.js';
 import { runWorkflow, summary, type Step } from '../workflow/engine.js';
 import {
@@ -111,7 +111,7 @@ function steps(): Step<ShipContext>[] {
 
     {
       name: 'Pushed to origin',
-      skip: (ctx) => (bool(ctx.flags, 'no-push') ? 'skipped by flag' : false),
+      skip: (ctx) => (negated(ctx.flags, 'push') ? 'skipped by flag' : false),
       async run(ctx) {
         const ahead = unpushedCount(ctx.branch, ctx.cwd);
         if (ahead === 0) return `${ctx.branch} already up to date`;
@@ -129,7 +129,7 @@ function steps(): Step<ShipContext>[] {
     {
       name: 'Pull request open',
       skip: (ctx) => {
-        if (bool(ctx.flags, 'no-pr')) return 'skipped by flag';
+        if (negated(ctx.flags, 'pr')) return 'skipped by flag';
         if (!ctx.repo) return 'no GitHub remote';
         if (ctx.branch === (str(ctx.flags, 'base') ?? 'main')) return 'already on the base branch';
         return false;
@@ -163,7 +163,7 @@ function steps(): Step<ShipContext>[] {
     {
       name: 'CI passed',
       skip: (ctx) => {
-        if (bool(ctx.flags, 'no-ci')) return 'skipped by flag';
+        if (negated(ctx.flags, 'ci')) return 'skipped by flag';
         if (!ctx.repo) return 'no GitHub remote';
         return false;
       },
@@ -210,7 +210,7 @@ function steps(): Step<ShipContext>[] {
     {
       name: 'Deployment ready',
       skip: (ctx) => {
-        if (bool(ctx.flags, 'no-deploy')) return 'skipped by flag';
+        if (negated(ctx.flags, 'deploy')) return 'skipped by flag';
         if (!ctx.project) return 'no Vercel project (use --project)';
         return false;
       },
@@ -257,7 +257,7 @@ function steps(): Step<ShipContext>[] {
       name: 'Health check',
       skip: (ctx) => {
         const url = str(ctx.flags, 'health') ?? ctx.deploymentUrl;
-        if (bool(ctx.flags, 'no-health')) return 'skipped by flag';
+        if (negated(ctx.flags, 'health')) return 'skipped by flag';
         if (!url) return 'nothing deployed to check';
         return false;
       },

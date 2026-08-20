@@ -71,7 +71,11 @@ function paint(state: StepState): string {
           ? c.bold(state.name)
           : state.name;
 
-  const detail = state.detail ? `  ${c.dim(state.detail)}` : '';
+  // Collapsed to one line: a multi-line failure (a git error, a build log) would
+  // otherwise desync the cursor arithmetic and shred the whole display on redraw.
+  const flat = state.detail?.replace(/\s+/g, ' ').trim();
+  const clipped = flat && flat.length > 68 ? `${flat.slice(0, 67)}…` : flat;
+  const detail = clipped ? `  ${c.dim(clipped)}` : '';
   // Only worth showing when it is long enough to explain a wait.
   const time = state.ms && state.ms > 1500 ? c.dim(`  ${(state.ms / 1000).toFixed(1)}s`) : '';
   return `  ${mark.padEnd(2)} ${name}${detail}${time}`;
