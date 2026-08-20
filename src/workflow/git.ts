@@ -6,7 +6,7 @@
  * every step shelling out for itself.
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -85,6 +85,27 @@ export function readPackageJson(cwd = process.cwd()): PackageJson | null {
   }
 }
 
+/**
+ * The Vercel project this directory is linked to.
+ *
+ * `.vercel/project.json` is written by `vercel link` and is the authoritative answer.
+ * Falling back to the package.json name guesses wrong constantly — a project scaffolded
+ * from a template keeps the template's name, which is how `tanstack_start_ts` ends up
+ * being looked for on Vercel when the real project is called something else.
+ *
+ * The file holds an id rather than a name; Vercel's project endpoint accepts either.
+ */
+export function linkedVercelProject(cwd = process.cwd()): string | null {
+  const path = join(cwd, '.vercel', 'project.json');
+  if (!existsSync(path)) return null;
+  try {
+    const data = JSON.parse(readFileSync(path, 'utf8')) as { projectId?: string };
+    return data.projectId ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function hasScript(name: string, cwd = process.cwd()): boolean {
   return Boolean(readPackageJson(cwd)?.scripts?.[name]);
 }
@@ -138,6 +159,92 @@ function shellQuote(arg: string): string {
   return process.platform === 'win32'
     ? `"${arg.replace(/"/g, '""')}"`
     : `'${arg.replace(/'/g, `'''`)}'`;
+}
+
+
+export interface RunAsyncOptions {
+  cwd?: string;
+  /** Kill the child after this long. A build with no ceiling hangs the workflow forever. */
+  timeoutMs?: number;
+  /** Called with each chunk of output, for live progress. */
+  onOutput?: (chunk: string) => void;
+}
+
+/**
+ * Run a command without blocking the event loop.
+ *
+ * `spawnSync` was wrong here for three reasons, all of which showed up as a workflow
+ * that appeared frozen:
+ *
+ *  - It blocks the loop, so nothing can tick a clock or redraw while a build runs, and
+ *    a slow step is indistinguishable from a hung one.
+ *  - There was no timeout, so a genuinely stuck child hung the workflow indefinitely.
+ *  - The child inherited a live stdin, so anything that prompted — npm asking to
+ *    install a missing package, a git credential helper — waited for input that was
+ *    never coming.
+ */
+export function runAsync(
+  command: string,
+  args: string[],
+  options: RunAsyncOptions = {},
+): Promise<{ ok: boolean; output: string; timedOut: boolean }> {
+  const { cwd = process.cwd(), timeoutMs = 10 * 60_000, onOutput } = options;
+
+  return new Promise((resolve) => {
+    const useShell = process.platform === 'win32';
+    const child = useShell
+      ? spawn([command, ...args.map(shellQuote)].join(' '), {
+          cwd,
+          shell: true,
+          // stdin closed: a child that asks a question gets EOF and fails fast
+          // instead of waiting for an answer nobody can give.
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
+      : spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+
+    let output = '';
+    let timedOut = false;
+    const collect = (chunk: Buffer) => {
+      const text = chunk.toString('utf8');
+      output += text;
+      onOutput?.(text);
+    };
+    child.stdout?.on('data', collect);
+    child.stderr?.on('data', collect);
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+      // SIGTERM is a request. Something wedged needs SIGKILL.
+      setTimeout(() => child.kill('SIGKILL'), 5000).unref();
+    }, timeoutMs);
+    timer.unref();
+
+    child.on('error', (err: NodeJS.ErrnoException) => {
+      clearTimeout(timer);
+      resolve({
+        ok: false,
+        timedOut: false,
+        output:
+          err.code === 'ENOENT'
+            ? `${command} is not installed, or not on PATH.`
+            : `could not run ${command}: ${err.message}`,
+      });
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({
+        ok: code === 0 && !timedOut,
+        timedOut,
+        output: timedOut
+          ? `${output.trim()}
+
+timed out after ${Math.round(timeoutMs / 1000)}s`.trim()
+          : output.trim(),
+      });
+    });
+  });
 }
 
 /** The last few meaningful lines of command output, for an error message. */

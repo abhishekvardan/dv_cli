@@ -76,8 +76,14 @@ function paint(state: StepState): string {
   const flat = state.detail?.replace(/\s+/g, ' ').trim();
   const clipped = flat && flat.length > 68 ? `${flat.slice(0, 67)}…` : flat;
   const detail = clipped ? `  ${c.dim(clipped)}` : '';
-  // Only worth showing when it is long enough to explain a wait.
-  const time = state.ms && state.ms > 1500 ? c.dim(`  ${(state.ms / 1000).toFixed(1)}s`) : '';
+  // A running step shows a live clock. Without it a slow build is indistinguishable
+  // from a hung one, which is exactly how a 99-second build gets reported as stuck.
+  const time =
+    state.status === 'running' && state.ms
+      ? c.dim(`  ${(state.ms / 1000).toFixed(0)}s`)
+      : state.ms && state.ms > 1500
+        ? c.dim(`  ${(state.ms / 1000).toFixed(1)}s`)
+        : '';
   return `  ${mark.padEnd(2)} ${name}${detail}${time}`;
 }
 
@@ -151,9 +157,19 @@ export async function runWorkflow<C>(
     }
 
     state.status = 'running';
+    const started = Date.now();
     if (live) draw();
 
-    const started = Date.now();
+    // Redraw once a second so the clock advances. Unref'd so a workflow that finishes
+    // between ticks is never held open by it.
+    const ticker = live
+      ? setInterval(() => {
+          state.ms = Date.now() - started;
+          draw();
+        }, 1000)
+      : undefined;
+    ticker?.unref?.();
+
     try {
       const outcome = await step.run(ctx);
       state.ms = Date.now() - started;
@@ -165,6 +181,8 @@ export async function runWorkflow<C>(
       const error = err instanceof Error ? err : new Error(String(err));
       state.detail = error.message;
       if (!step.optional) failure = { step: step.name, error };
+    } finally {
+      if (ticker) clearInterval(ticker);
     }
 
     if (live) draw();

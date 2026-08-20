@@ -26,8 +26,9 @@ import {
   hasScript,
   headSha,
   isRepo,
+  linkedVercelProject,
   readPackageJson,
-  run,
+  runAsync,
   tail,
   unpushedCount,
 } from '../workflow/git.js';
@@ -89,8 +90,11 @@ function steps(): Step<ShipContext>[] {
         return false;
       },
       async run(ctx) {
-        const result = run('npm', ['test', '--silent'], ctx.cwd);
-        if (!result.ok) throw new Error(`\n${tail(result.output, 12)}`);
+        const result = await runAsync('npm', ['test'], {
+          cwd: ctx.cwd,
+          timeoutMs: num(ctx.flags, 'test-timeout', 600) * 1000,
+        });
+        if (!result.ok) throw new Error(tail(result.output, 12) || 'tests failed');
         return undefined;
       },
     },
@@ -103,8 +107,11 @@ function steps(): Step<ShipContext>[] {
         return false;
       },
       async run(ctx) {
-        const result = run('npm', ['run', 'build', '--silent'], ctx.cwd);
-        if (!result.ok) throw new Error(`\n${tail(result.output, 12)}`);
+        const result = await runAsync('npm', ['run', 'build'], {
+          cwd: ctx.cwd,
+          timeoutMs: num(ctx.flags, 'build-timeout', 900) * 1000,
+        });
+        if (!result.ok) throw new Error(tail(result.output, 12) || 'build failed');
         return undefined;
       },
     },
@@ -215,6 +222,22 @@ function steps(): Step<ShipContext>[] {
         return false;
       },
       async run(ctx) {
+        // Checked up front: waiting 60 seconds to conclude "no deployment" when the
+        // project simply does not exist wastes a minute and blames the wrong thing.
+        try {
+          await vercel.project(ctx.project!);
+        } catch {
+          const names = await vercel
+            .projects(50)
+            .then((list: any[]) => list.map((p) => p.name))
+            .catch(() => []);
+          throw new Error(
+            `no Vercel project "${ctx.project}"` +
+              (names.length ? ` - yours are: ${names.slice(0, 8).join(', ')}` : '') +
+              '. Pass --project <name>, or run `vercel link` here.',
+          );
+        }
+
         const timeoutMs = num(ctx.flags, 'deploy-timeout', 900) * 1000;
         const started = Date.now();
 
@@ -288,8 +311,10 @@ export async function shipCommand(args: ParsedArgs): Promise<void> {
     branch: currentBranch(cwd),
     sha: headSha(cwd),
     repo: str(args.flags, 'repo') ?? githubRemote('origin', cwd),
-    // Defaults to the package name, which is what a Vercel project is usually called.
-    project: str(args.flags, 'project', 'p') ?? readPackageJson(cwd)?.name,
+    // `.vercel/project.json` is authoritative; the package name is a last resort and
+    // is frequently the template's name rather than the real project's.
+    project:
+      str(args.flags, 'project', 'p') ?? linkedVercelProject(cwd) ?? readPackageJson(cwd)?.name,
     flags: args.flags,
   };
 

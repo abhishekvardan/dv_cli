@@ -4,6 +4,14 @@ export const VERSION = '0.1.0';
 
 const SECTIONS: Array<{ title: string; rows: Array<[string, string]> }> = [
   {
+    title: 'Workflows',
+    rows: [
+      ['dv ship', 'Test, build, push, PR, wait for CI, deploy, verify'],
+      ['dv ship --dry-run', 'Show the steps without running them'],
+      ['dv ship --skip-tests --no-pr', 'Turn individual steps off'],
+    ],
+  },
+  {
     title: 'Setup',
     rows: [
       ['dv auth login <provider>', 'Sign in, however that service allows'],
