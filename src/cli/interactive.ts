@@ -7,7 +7,7 @@
  * it invisible.
  */
 
-import { c, info, warn } from './ui.js';
+import { c, clipVisible, info, terminalWidth, warn } from './ui.js';
 import { CliError, EXIT } from './errors.js';
 
 /** Read a line from stdin. Used for confirmations, never for secrets. */
@@ -122,19 +122,63 @@ async function selectWithArrows<T>(
   info(c.dim('  up/down to move, Enter to select, Ctrl-C to cancel'));
   info('');
 
+  /**
+   * Paint the list, leaving the cursor on the LAST row.
+   *
+   * Deliberately no trailing newline. Writing one while the cursor sits on the
+   * terminal's bottom line makes the terminal scroll: the content shifts up, so the
+   * following "up N lines" lands one row too low and the next paint appends instead
+   * of replacing. That is the duplication — it only shows up once the list reaches
+   * the bottom of the window, which is why it looked intermittent.
+   *
+   * Ending on the last row means the redraw moves up N-1, and no newline is ever
+   * written past the final line.
+   */
   const draw = (first: boolean) => {
-    // Every redraw starts by stepping back over the rows written last time.
-    if (!first) err.write(ANSI.up(choices.length));
-    for (const [i, choice] of choices.entries()) {
-      err.write(`${ANSI.clearLine}\r${row(choice, i === index, labelWidth)}\n`);
-    }
+    if (!first && choices.length > 1) err.write(ANSI.up(choices.length - 1));
+    choices.forEach((choice, i) => {
+      const text = clipVisible(row(choice, i === index, labelWidth), terminalWidth() - 1);
+      err.write(`\r${ANSI.clearLine}${text}`);
+      if (i < choices.length - 1) err.write('\n');
+    });
   };
 
+  /** Blank the list and put the cursor back on its first row. */
   const erase = () => {
-    err.write(ANSI.up(choices.length));
-    for (let i = 0; i < choices.length; i++) err.write(`${ANSI.clearLine}\n`);
-    err.write(ANSI.up(choices.length));
+    if (choices.length > 1) err.write(ANSI.up(choices.length - 1));
+    choices.forEach((_, i) => {
+      err.write(`\r${ANSI.clearLine}`);
+      if (i < choices.length - 1) err.write('\n');
+    });
+    if (choices.length > 1) err.write(ANSI.up(choices.length - 1));
+    err.write('\r');
   };
+
+  /**
+   * Split a chunk into individual keys.
+   *
+   * A held or quickly repeated arrow arrives as several sequences in one chunk, and
+   * comparing the chunk as a whole matches none of them, so the press is silently
+   * dropped. This also tells a lone ESC apart from the start of a sequence.
+   */
+  const parseKeys = (chunk: string): string[] => {
+    const keys: string[] = [];
+    let i = 0;
+    while (i < chunk.length) {
+      if (chunk[i] === '\u001b') {
+        const seq = /^\u001b(\[[0-9;]*[A-Za-z~]|O[A-Za-z])/.exec(chunk.slice(i));
+        if (seq) {
+          keys.push(seq[0]);
+          i += seq[0].length;
+          continue;
+        }
+      }
+      keys.push(chunk[i]!);
+      i++;
+    }
+    return keys;
+  };
+
 
   const wasRaw = stdin.isRaw;
   return new Promise<T>((resolve, reject) => {
@@ -158,36 +202,40 @@ async function selectWithArrows<T>(
       resolve(chosen.value);
     };
 
-    const onData = (chunk: Buffer) => {
-      // Compared whole rather than per character: an arrow key arrives as a
-      // three-byte sequence, and splitting it turns one press into three keystrokes.
-      const key = chunk.toString('utf8');
-
-      if (KEY.enter.includes(key)) return finish(choices[index]!);
+    /** Act on one key. Returns true once the menu is finished with. */
+    const handle = (key: string): boolean => {
+      if (KEY.enter.includes(key)) {
+        finish(choices[index]!);
+        return true;
+      }
 
       if (KEY.cancel.includes(key)) {
         erase();
         cleanup();
         reject(new CliError('Cancelled.', EXIT.usage));
-        return;
+        return true;
       }
 
       // Wrapping means you never have to change direction to reach the far end.
       if (KEY.up.includes(key)) {
         index = (index - 1 + choices.length) % choices.length;
-        return draw(false);
+        draw(false);
+        return false;
       }
       if (KEY.down.includes(key)) {
         index = (index + 1) % choices.length;
-        return draw(false);
+        draw(false);
+        return false;
       }
       if (KEY.home.includes(key)) {
         index = 0;
-        return draw(false);
+        draw(false);
+        return false;
       }
       if (KEY.end.includes(key)) {
         index = choices.length - 1;
-        return draw(false);
+        draw(false);
+        return false;
       }
 
       // Digits still work, so muscle memory from a numbered menu is not punished.
@@ -195,8 +243,17 @@ async function selectWithArrows<T>(
         const n = Number(key) - 1;
         if (n < choices.length) {
           index = n;
-          return finish(choices[index]!);
+          finish(choices[index]!);
+          return true;
         }
+      }
+      return false;
+    };
+
+    // One chunk can carry several keys when an arrow is held or pressed quickly.
+    const onData = (chunk: Buffer) => {
+      for (const key of parseKeys(chunk.toString('utf8'))) {
+        if (handle(key)) return;
       }
     };
 

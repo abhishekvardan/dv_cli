@@ -5,7 +5,7 @@ One CLI for GitHub, Gmail, Calendar, LinkedIn and Vercel — with OAuth built in
 ```bash
 npm install -g @abhishekvardanbotta/dv
 dv auth login github
-dv gh repos
+dv gh repo list
 ```
 
 No runtime dependencies. Node 20+.
@@ -90,29 +90,78 @@ port is chosen at runtime, and Google accepts any port on the loopback address.
 
 ---
 
+## Workflows
+
+The reason this exists rather than being three thin API wrappers. Individual API calls
+are easy; the *sequence* is not, because it spans git, GitHub, Vercel and the running
+site, and each has a different idea of what "done" means.
+
+```bash
+dv ship
+```
+
+```
+DevOS Ship
+────────────────────────────
+
+  ok Git status clean   main at 25f83ac
+  -  Tests passed       no test script
+  ok Build successful   99.4s
+  ok Pushed to origin   1 commit
+  ok Pull request open  #142 -> main
+  ok CI passed          3 checks
+  ok Deployment ready   https://myapp.vercel.app
+  ok Health check       200 https://myapp.vercel.app
+
+Pull request  https://github.com/you/myapp/pull/142
+Deployment    https://myapp.vercel.app
+
+✓ Ship: SUCCESS
+```
+
+Each step skips itself with a reason when it does not apply — no test script, no
+GitHub remote, not linked to Vercel — so it degrades instead of failing.
+
+```bash
+dv ship --dry-run                 # show the plan, run nothing
+dv ship --skip-tests --no-pr      # turn steps off
+dv ship --project my-app          # name the Vercel project
+dv ship --json                    # machine-readable result
+```
+
+The waits are the hard part, and are handled explicitly:
+
+- **CI** — GitHub reports no check runs for a few seconds after a push, which reads
+  identically to "all passed". The first 20 seconds of emptiness is treated as *still
+  starting*.
+- **Deployment** — Vercel builds from the git push, not from this CLI, so the step finds
+  the deployment matching your commit SHA rather than creating one.
+- **Health** — a deployment reporting READY means the build finished, not that the site
+  serves. The URL is actually requested.
+
 ## What it does
 
 ### GitHub
 
 ```bash
-dv gh repos --limit 50 --private
-dv gh repo my-project
-dv gh create my-app --description "..." --clone      # private by default
-dv gh create my-app --public                         # asks first
-dv gh ls my-app src
-dv gh read my-app src/index.ts > local.ts
+dv gh repo list --limit 50 --private
+dv gh repo view my-project
+dv gh repo create my-app --description "..." --clone      # private by default
+dv gh repo create my-app --public                         # asks first
+dv gh file ls my-app src
+dv gh file read my-app src/index.ts > local.ts
 dv gh search createKiln --repo my-app
-dv gh issues my-app --state all --label bug
-dv gh issue my-app --title "Crash on save" --body "..." --label bug
-dv gh pr my-app --head feature/x --title "Add x"
-dv gh branch my-app feature/x
-dv gh put my-app README.md --file ./README.md -m "docs: update"
-dv gh runs my-app
-dv gh dispatch my-app -w release.yml --ref main
-dv gh clone my-app
+dv gh issue list my-app --state all --label bug
+dv gh issue create my-app --title "Crash on save" --body "..." --label bug
+dv gh pr create my-app --head feature/x --title "Add x"
+dv gh branch create my-app feature/x
+dv gh file put my-app README.md --file ./README.md -m "docs: update"
+dv gh run list my-app
+dv gh workflow run my-app -w release.yml --ref main
+dv gh repo clone my-app
 ```
 
-A bare repo name is completed with your own login, so `dv gh issues my-app` works;
+A bare repo name is completed with your own login, so `dv gh issue list my-app` works;
 `owner/repo` is accepted anywhere too.
 
 ### Gmail and Calendar
@@ -143,10 +192,10 @@ that would read as "you have no posts".
 ### Vercel
 
 ```bash
-dv vercel projects
-dv vercel deployments --project my-app
-dv vercel redeploy my-app              # asks first
-dv vercel env my-app                   # keys and targets; values are never fetched
+dv vercel project list
+dv vercel deploy list --project my-app
+dv vercel deploy redeploy my-app              # asks first
+dv vercel env list my-app                   # keys and targets; values are never fetched
 ```
 
 ### Anything else
@@ -189,7 +238,7 @@ Everything supports `--json`, and **data goes to stdout while progress goes to
 stderr** — so a redirect produces a clean file even while status lines are printing:
 
 ```bash
-dv gh repos --json > repos.json
+dv gh repo list --json > repos.json
 dv gmail search "is:unread" --json | jq '.[] | .subject'
 ```
 
@@ -203,6 +252,7 @@ Exit codes are meaningful, so a wrapper can tell the cases apart:
 | 3 | Not signed in, or the credential is dead — run `dv auth login` |
 | 4 | The provider refused: rate limit, missing scope, permission denied |
 | 5 | Nothing matched |
+| 6 | You declined a confirmation — nothing happened |
 
 ```bash
 dv gh repo maybe-missing >/dev/null 2>&1

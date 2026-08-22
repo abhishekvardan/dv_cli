@@ -1,7 +1,7 @@
 {
   "name": "@abhishekvardanbotta/dv",
-  "version": "0.1.0",
-  "description": "One CLI for GitHub, Gmail, Calendar, LinkedIn and Vercel — with OAuth built in.",
+  "version": "1.0.0",
+  "description": "One CLI for GitHub, Vercel, Gmail, Calendar and LinkedIn - with OAuth built in and cross-service workflows.",
   "type": "module",
   "bin": {
     "dv": "dist/index.js"
@@ -10,7 +10,8 @@
   "types": "dist/index.d.ts",
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=20"
@@ -25,10 +26,13 @@
   "keywords": [
     "cli",
     "github",
+    "vercel",
     "gmail",
     "linkedin",
     "oauth",
-    "dv"
+    "devops",
+    "deploy",
+    "workflow"
   ],
   "license": "MIT",
   "devDependencies": {
@@ -44,5 +48,17 @@
     "@abhishekvardanbotta/kiln": {
       "optional": true
     }
+  },
+  "author": "Abhishek Vardan Botta",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abhishekvardan/dv.git"
+  },
+  "homepage": "https://github.com/abhishekvardan/dv#readme",
+  "bugs": {
+    "url": "https://github.com/abhishekvardan/dv/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

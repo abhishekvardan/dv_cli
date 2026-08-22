@@ -19,8 +19,11 @@ export function git(args: string[], cwd = process.cwd()): { ok: boolean; out: st
   }
   return {
     ok: result.status === 0,
-    out: (result.stdout ?? '').trim(),
-    err: (result.stderr ?? '').trim(),
+    // trimEnd, not trim. `git status --porcelain` encodes state in the first two
+    // columns, so a leading space is data — trimming it mangled the first file in
+    // every listing ("README.md" became "EADME.md") and nothing else.
+    out: (result.stdout ?? '').replace(/\s+$/, ''),
+    err: (result.stderr ?? '').replace(/\s+$/, ''),
   };
 }
 

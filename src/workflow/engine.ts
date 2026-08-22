@@ -11,7 +11,7 @@
  * check it is actually serving" spans four services and is where the real work is.
  */
 
-import { c, info, out } from '../cli/ui.js';
+import { c, clipVisible, info, out, terminalWidth } from '../cli/ui.js';
 import { CliError, EXIT } from '../cli/errors.js';
 
 export type StepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
@@ -127,13 +127,21 @@ export async function runWorkflow<C>(
   }
 
   let drawn = 0;
+  const ANSI_UP = (n: number) => (n > 0 ? `\u001b[${n}A` : '');
   const draw = () => {
+    // Non-terminal output (a pipe, a CI log) gets one plain line per step from the
+    // caller instead; cursor codes written there are just noise in the log.
     if (!live) return;
-    if (drawn > 0) process.stderr.write(`\u001b[${drawn}A`);
-    for (const state of states) {
-      process.stderr.write(`\u001b[2K\r${paint(state)}\n`);
-    }
-    drawn = states.length;
+    // Same rule as the menu: no newline after the last row. Writing one while the
+    // cursor is on the terminal's bottom line scrolls the buffer, so the following
+    // "up N lines" lands a row too low and the next paint appends instead of
+    // replacing — the step list appears to duplicate itself.
+    if (drawn > 0) process.stderr.write(ANSI_UP(drawn));
+    states.forEach((state, i) => {
+      process.stderr.write(`\r\u001b[2K${clipVisible(paint(state), terminalWidth() - 1)}`);
+      if (i < states.length - 1) process.stderr.write('\n');
+    });
+    drawn = states.length - 1;
   };
 
   draw();
@@ -189,6 +197,8 @@ export async function runWorkflow<C>(
     else info(paint(state));
   }
 
+  // Close the list: every row so far ended without a newline.
+  if (live && states.length > 0) process.stderr.write('\n');
   info('');
 
   if (failure) {

@@ -4,7 +4,7 @@
 
 import { readFileSync } from 'node:fs';
 
-import { UsageError } from '../cli/errors.js';
+import { UsageError, CancelledError } from '../cli/errors.js';
 import { bool, num, str, type ParsedArgs } from '../cli/args.js';
 import { c, confirm, info, json, out, relative, success, table, warn } from '../cli/ui.js';
 import { linkedin } from '../api/linkedin.js';
@@ -66,8 +66,7 @@ export async function linkedinCommand(args: ParsedArgs): Promise<void> {
 
       const ok = await confirm('Post it?', bool(args.flags, 'yes', 'y'));
       if (!ok) {
-        info('Not posted.');
-        return;
+        throw new CancelledError('Not posted.');
       }
 
       const result = await linkedin.share({

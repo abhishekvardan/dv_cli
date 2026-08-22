@@ -5,7 +5,7 @@
 import { spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 
-import { CliError, NotFoundError, UsageError } from '../cli/errors.js';
+import { CliError, NotFoundError, UsageError, CancelledError } from '../cli/errors.js';
 import { bool, num, str, type ParsedArgs } from '../cli/args.js';
 import { describeShape, resolveCommand, type CommandShape } from '../cli/dispatch.js';
 import { c, confirm, info, json, out, relative, success, table, warn } from '../cli/ui.js';
@@ -316,8 +316,7 @@ export async function ghCommand(args: ParsedArgs): Promise<void> {
           bool(args.flags, 'yes', 'y'),
         );
         if (!ok) {
-          info('Cancelled. Nothing was created.');
-          return;
+          throw new CancelledError('Cancelled. Nothing was created.');
         }
       }
 
@@ -409,14 +408,14 @@ export async function ghCommand(args: ParsedArgs): Promise<void> {
           `Make ${c.bold(full)} ${c.yellow('PUBLIC')}? Anyone will be able to read the code.`,
           bool(args.flags, 'yes', 'y'),
         );
-        if (!ok) return info('Cancelled. Nothing was changed.');
+        if (!ok) throw new CancelledError();
       }
       if (patch.archived === true) {
         const ok = await confirm(
           `Archive ${c.bold(full)}? It becomes read-only until unarchived.`,
           bool(args.flags, 'yes', 'y'),
         );
-        if (!ok) return info('Cancelled. Nothing was changed.');
+        if (!ok) throw new CancelledError();
       }
 
       const updated = await github.updateRepo(full, patch);
@@ -447,8 +446,7 @@ export async function ghCommand(args: ParsedArgs): Promise<void> {
         warn(`This permanently deletes ${c.bold(full)} and cannot be undone.`);
         const typed = await prompt(`Type the full name to confirm:`);
         if (typed !== full) {
-          info('Names did not match. Nothing was deleted.');
-          return;
+          throw new CancelledError('Names did not match. Nothing was deleted.');
         }
       }
       await github.deleteRepo(full);

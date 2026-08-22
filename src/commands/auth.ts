@@ -19,6 +19,10 @@ import {
 } from '../cli/ui.js';
 import {
   credentialsArePrivate,
+  listAccounts,
+  renameAccount,
+  resolveAccount,
+  setActiveAccount,
   credentialsPath,
   deleteCredential,
   getCredential,
@@ -48,11 +52,14 @@ import { identify as genericIdentify } from '../api/client.js';
  * The scopes come back only for GitHub, and only for classic tokens — no other
  * provider here reports them at identify time.
  */
-async function identify(providerId: string): Promise<{ account?: string; scopes?: string[] }> {
+async function identify(
+  providerId: string,
+  token?: string,
+): Promise<{ account?: string; scopes?: string[] }> {
   // GitHub is special-cased only because it reports a classic token's scopes in a
   // response header, which the generic path cannot see.
   if (providerId === 'github') {
-    const { login, scopes } = await github.whoamiWithScopes();
+    const { login, scopes } = await github.whoamiWithScopes(token);
     return { account: login, scopes };
   }
 
@@ -62,8 +69,29 @@ async function identify(providerId: string): Promise<{ account?: string; scopes?
   // failure only surfaced at the next command. It also meant no connector added with
   // `dv connect add` was ever checked.
   const provider = getProvider(providerId)!;
-  const { account } = await genericIdentify(provider);
+  const { account } = await genericIdentify(provider, token);
   return { account };
+}
+
+/**
+ * Where a freshly obtained credential should be stored.
+ *
+ * Identifies the token *before* writing it, so it lands under the account it actually
+ * belongs to. Storing first and renaming afterwards overwrote whichever account
+ * happened to be active — pasting a second GitHub token silently replaced the first,
+ * which is the opposite of adding an account.
+ *
+ * `--as` remains available as a nickname, for when the provider's own name for you is
+ * not the one you think in.
+ */
+export async function accountNameFor(
+  providerId: string,
+  token: string | undefined,
+  as: string | undefined,
+): Promise<{ name: string; identity?: { account?: string; scopes?: string[] } }> {
+  if (as) return { name: as };
+  const identity = await identify(providerId, token).catch(() => undefined);
+  return { name: identity?.account ?? 'default', identity };
 }
 
 /**
@@ -79,10 +107,14 @@ async function saveSuppliedCredential(providerId: string, args: ParsedArgs): Pro
   if (!token) {
     // A script cannot answer a prompt, so it still gets the flag-based error.
     if (!process.stdin.isTTY) {
+      // The suggested command carries --as through. Without it, following this hint
+      // while adding a second account would overwrite the first one.
+      const as = str(args.flags, 'as', 'account');
+      const suffix = as ? ` --as ${as}` : '';
       throw new UsageError(
         '--token is required.',
         `Get one at ${provider.appSetupUrl ?? 'the service dashboard'}, then:\n` +
-          `  dv auth token ${providerId} --token <value>\n` +
+          `  dv auth token ${providerId} --token <value>${suffix}\n` +
           '  (or set DV_TOKEN to keep it out of your shell history)',
       );
     }
@@ -102,8 +134,11 @@ async function saveSuppliedCredential(providerId: string, args: ParsedArgs): Pro
     warn(`That does not look like a ${provider.label} token. Saving it anyway.`);
   }
 
-  saveCredential(providerId, { accessToken: token, method: 'token', scope: undefined });
-  await verifyAndReport(providerId, token);
+  // Resolved before the write, so a token belonging to someone else becomes a new
+  // account instead of overwriting the active one.
+  const { name } = await accountNameFor(providerId, token, str(args.flags, 'as', 'account'));
+  saveCredential(providerId, { accessToken: token, method: 'token', scope: undefined }, name);
+  await verifyAndReport(providerId, token, name);
 }
 
 /**
@@ -135,13 +170,14 @@ async function loginBasic(providerId: string, args: ParsedArgs): Promise<void> {
     if (!user || !secret) throw new UsageError('Both an email and a token are needed.');
   }
 
-  saveCredential(providerId, {
-    accessToken: `${user}:${secret}`,
-    method: 'token',
-    account: user,
-    scope: undefined,
-  });
-  await verifyAndReport(providerId, `${user}:${secret}`);
+  // The username is the natural account name here, and is known up front.
+  const name = str(args.flags, 'as', 'account') ?? user;
+  saveCredential(
+    providerId,
+    { accessToken: `${user}:${secret}`, method: 'token', account: user, scope: undefined },
+    name,
+  );
+  await verifyAndReport(providerId, `${user}:${secret}`, name);
 }
 
 /**
@@ -199,7 +235,7 @@ async function loginClientCredentials(providerId: string): Promise<void> {
  * success would move the failure to the next command, where the cause is far less
  * obvious.
  */
-async function verifyAndReport(providerId: string, token?: string): Promise<void> {
+async function verifyAndReport(providerId: string, token?: string, as?: string): Promise<void> {
   const provider = getProvider(providerId)!;
 
   if (!provider.whoamiUrl) {
@@ -210,15 +246,17 @@ async function verifyAndReport(providerId: string, token?: string): Promise<void
     return;
   }
 
-  const identity = await identify(providerId).catch((e) => {
+  const identity = await identify(providerId, token).catch((e) => {
     warn(`Saved, but ${provider.label} rejected it: ${e.message}`);
     return null;
   });
   if (!identity?.account && identity === null) return;
 
-  if (identity?.account) saveCredential(providerId, { account: identity.account });
+  // Written to the account the caller already decided on — no renaming, which is
+  // what used to clobber whichever account happened to be active.
+  if (identity?.account) saveCredential(providerId, { account: identity.account }, as);
   if (identity?.scopes?.length) {
-    saveCredential(providerId, { scope: identity.scopes.join(' ') });
+    saveCredential(providerId, { scope: identity.scopes.join(' ') }, as);
   }
 
   success(`${provider.label} connected${identity?.account ? ` as ${c.bold(identity.account)}` : ''}.`);
@@ -318,7 +356,7 @@ function setupInstructions(provider: ProviderDef, extra: string[] = []): string 
   ].join('\n');
 }
 
-async function loginDevice(providerId: string): Promise<void> {
+async function loginDevice(providerId: string, args: ParsedArgs): Promise<void> {
   const provider = getProvider(providerId)!;
   const app = resolveApp(providerId);
   if (!app.clientId) {
@@ -344,19 +382,26 @@ async function loginDevice(providerId: string): Promise<void> {
     onSlowDown: (ms) => warn(`${provider.label} asked us to slow down; polling every ${ms / 1000}s.`),
   });
 
-  saveCredential(providerId, {
-    accessToken: token.access_token,
-    refreshToken: token.refresh_token,
-    expiresAt: token.expires_in
-      ? new Date(Date.now() + Number(token.expires_in) * 1000).toISOString()
-      : undefined,
-    scope: token.scope,
-    method: 'device',
-  });
+  const { name } = await accountNameFor(
+    providerId,
+    token.access_token,
+    str(args.flags, 'as', 'account'),
+  );
+  saveCredential(
+    providerId,
+    {
+      accessToken: token.access_token,
+      refreshToken: token.refresh_token,
+      expiresAt: token.expires_in
+        ? new Date(Date.now() + Number(token.expires_in) * 1000).toISOString()
+        : undefined,
+      scope: token.scope,
+      method: 'device',
+    },
+    name,
+  );
 
-  const { account } = await identify(providerId).catch(() => ({ account: undefined }));
-  if (account) saveCredential(providerId, { account });
-  success(`${provider.label} connected${account ? ` as ${c.bold(account)}` : ''}.`);
+  await verifyAndReport(providerId, token.access_token, name);
 }
 
 async function loginLoopback(providerId: string, args: ParsedArgs): Promise<void> {
@@ -403,18 +448,26 @@ async function loginLoopback(providerId: string, args: ParsedArgs): Promise<void
 
   const token = await exchangeCode(provider, app.clientId, app.clientSecret, result);
 
-  saveCredential(providerId, {
-    accessToken: token.access_token,
-    refreshToken: token.refresh_token,
-    expiresAt: token.expires_in
-      ? new Date(Date.now() + Number(token.expires_in) * 1000).toISOString()
-      : undefined,
-    scope: token.scope,
-    method: 'oauth',
-  });
+  const { name } = await accountNameFor(
+    providerId,
+    token.access_token,
+    str(args.flags, 'as', 'account'),
+  );
+  saveCredential(
+    providerId,
+    {
+      accessToken: token.access_token,
+      refreshToken: token.refresh_token,
+      expiresAt: token.expires_in
+        ? new Date(Date.now() + Number(token.expires_in) * 1000).toISOString()
+        : undefined,
+      scope: token.scope,
+      method: 'oauth',
+    },
+    name,
+  );
 
-  const { account } = await identify(providerId).catch(() => ({ account: undefined }));
-  if (account) saveCredential(providerId, { account });
+  await verifyAndReport(providerId, token.access_token, name);
 
   // Worth flagging now rather than at the first expiry.
   if (!token.refresh_token) {
@@ -423,7 +476,6 @@ async function loginLoopback(providerId: string, args: ParsedArgs): Promise<void
         `Re-run the login then, or check the app is configured for offline access.`,
     );
   }
-  success(`${provider.label} connected${account ? ` as ${c.bold(account)}` : ''}.`);
 }
 
 export async function authCommand(args: ParsedArgs): Promise<void> {
@@ -445,14 +497,14 @@ export async function authCommand(args: ParsedArgs): Promise<void> {
       // available for a CLI; --method picks another when you have a reason.
       const chosen = await chooseMethod(provider, args);
 
-      if (provider.setupHint) {
+      if (provider.setupHint && args.flags.__hintShown !== true) {
         info('');
         for (const line of provider.setupHint.split('\n')) info(c.dim(`  ${line}`));
       }
 
       switch (chosen) {
         case 'device':
-          await loginDevice(providerId);
+          await loginDevice(providerId, args);
           return;
         case 'loopback':
           await loginLoopback(providerId, args);
@@ -486,12 +538,97 @@ export async function authCommand(args: ParsedArgs): Promise<void> {
       return;
     }
 
+    case 'accounts': {
+      const providerId = args.command[2] ?? args.positional[0];
+      const wanted = providerId ? [providerId] : Object.keys(allProviders());
+
+      const rows = wanted.flatMap((id) => {
+        const { active, names } = listAccounts(id);
+        return names.map((name) => {
+          const credential = getCredential(id, name);
+          return { provider: id, name, active: name === active, credential };
+        });
+      });
+
+      if (bool(args.flags, 'json')) {
+        return json(
+          rows.map((r) => ({
+            provider: r.provider,
+            account: r.name,
+            active: r.active,
+            method: r.credential?.method ?? null,
+            expiresAt: r.credential?.expiresAt ?? null,
+          })),
+        );
+      }
+      if (rows.length === 0) {
+        return info(providerId ? `No accounts for ${providerId}.` : 'No accounts yet.');
+      }
+
+      table(rows, [
+        { header: '', value: (r) => (r.active ? c.green('*') : ' ') },
+        { header: 'provider', value: (r) => r.provider },
+        { header: 'account', value: (r) => (r.active ? c.bold(r.name) : r.name), max: 34 },
+        { header: 'via', value: (r) => r.credential?.method ?? '—' },
+        {
+          header: 'expires',
+          value: (r) => (r.credential?.expiresAt ? relative(r.credential.expiresAt) : '—'),
+        },
+      ]);
+      info('');
+      info(c.dim('  dv auth switch <provider> <account>   ·   or one-off: --as <account>'));
+      return;
+    }
+
+    case 'switch':
+    case 'use': {
+      const providerId = args.command[2] ?? args.positional[0];
+      if (!providerId) {
+        throw new UsageError('Which provider?', 'dv auth switch github personal');
+      }
+      const { active, names } = listAccounts(providerId);
+      if (names.length === 0) {
+        throw new UsageError(`No accounts for ${providerId}.`, `dv auth login ${providerId}`);
+      }
+
+      let target = args.command[3] ?? args.positional[1];
+      if (!target) {
+        if (names.length === 1) {
+          return info(`${providerId} has only one account (${names[0]}).`);
+        }
+        if (!process.stdin.isTTY) {
+          throw new UsageError('Which account?', `Available: ${names.join(', ')}`);
+        }
+        target = await select(
+          `Which ${providerId} account?`,
+          names.map((name) => ({
+            value: name,
+            label: name,
+            detail: name === active ? 'current' : undefined,
+            recommended: name === active,
+          })),
+        );
+      }
+
+      setActiveAccount(providerId, target);
+      success(`${providerId} now uses ${c.bold(target)}.`);
+      return;
+    }
+
     case 'logout': {
       const providerId = args.command[2] ?? args.positional[0];
       if (!providerId) throw new UsageError('Which provider?', 'dv auth logout github');
-      const removed = deleteCredential(providerId);
-      if (removed) success(`Removed the ${providerId} credential.`);
-      else info(`${providerId} was not connected.`);
+      // Without --as this removes every account for the provider, which is what
+      // "log out of GitHub" means; with it, just the one named.
+      const account = str(args.flags, 'as', 'account');
+      const removed = deleteCredential(providerId, account);
+      if (removed) {
+        success(account ? `Removed ${providerId} account "${account}".` : `Logged out of ${providerId}.`);
+        const left = listAccounts(providerId);
+        if (left.names.length > 0) info(c.dim(`  Still signed in as: ${left.names.join(', ')}`));
+      } else {
+        info(account ? `No "${account}" account for ${providerId}.` : `${providerId} was not connected.`);
+      }
       return;
     }
 
@@ -583,7 +720,7 @@ export async function authCommand(args: ParsedArgs): Promise<void> {
     default:
       throw new UsageError(
         `Unknown auth command "${sub}".`,
-        'Try: login, token, logout, refresh, status, scopes, whoami',
+        'Try: login, token, logout, refresh, status, scopes, whoami, accounts, switch',
       );
   }
 }

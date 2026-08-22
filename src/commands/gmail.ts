@@ -4,7 +4,7 @@
 
 import { readFileSync } from 'node:fs';
 
-import { UsageError } from '../cli/errors.js';
+import { UsageError, CancelledError } from '../cli/errors.js';
 import { bool, num, str, type ParsedArgs } from '../cli/args.js';
 import { c, confirm, info, json, out, relative, success, table } from '../cli/ui.js';
 import { calendar, gmail } from '../api/google.js';
@@ -102,8 +102,7 @@ export async function gmailCommand(args: ParsedArgs): Promise<void> {
       out(`${c.dim('body   ')} ${body.slice(0, 200)}${body.length > 200 ? '…' : ''}`);
       const ok = await confirm('Send this email?', bool(args.flags, 'yes', 'y'));
       if (!ok) {
-        info('Not sent.');
-        return;
+        throw new CancelledError('Not sent.');
       }
 
       const sent = await gmail.send({ to, subject, body, cc: str(args.flags, 'cc') });
@@ -240,8 +239,7 @@ export async function calendarCommand(args: ParsedArgs): Promise<void> {
       if (attendees?.length) out(`${c.dim('invite')} ${attendees.join(', ')}`);
       const ok = await confirm('Create this event?', bool(args.flags, 'yes', 'y'));
       if (!ok) {
-        info('Not created.');
-        return;
+        throw new CancelledError('Not created.');
       }
 
       const event = await calendar.create({
@@ -261,7 +259,7 @@ export async function calendarCommand(args: ParsedArgs): Promise<void> {
       const id = args.command[2] ?? args.positional[0];
       if (!id) throw new UsageError('Which event?', 'dv cal rm <id>   (ids come from --json)');
       const ok = await confirm(`Delete event ${id}?`, bool(args.flags, 'yes', 'y'));
-      if (!ok) return info('Not deleted.');
+      if (!ok) throw new CancelledError('Not deleted.');
       await calendar.delete(id);
       success('Deleted.');
       return;

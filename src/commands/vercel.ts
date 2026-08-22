@@ -4,12 +4,13 @@
  * Same noun-verb shape as `dv gh`, so knowing one teaches the other.
  */
 
-import { UsageError } from '../cli/errors.js';
+import { UsageError, CancelledError } from '../cli/errors.js';
 import { bool, num, str, type ParsedArgs } from '../cli/args.js';
 import { describeShape, resolveCommand, type CommandShape } from '../cli/dispatch.js';
-import { c, confirm, info, json, out, relative, select, success, table } from '../cli/ui.js';
+import { ask, c, confirm, info, json, out, relative, select, success, table } from '../cli/ui.js';
+import { basename } from 'node:path';
 import { vercel } from '../api/vercel.js';
-import { writeVercelLink } from '../workflow/git.js';
+import { githubRemote, writeVercelLink } from '../workflow/git.js';
 
 const SHAPE: CommandShape = {
   verbs: {
@@ -77,6 +78,10 @@ export async function linkProject(
     );
   }
 
+  // A sentinel choice rather than a separate command: needing to leave, create the
+  // project, and come back is the friction this whole flow exists to remove.
+  const CREATE = Symbol('create');
+
   if (!chosen) {
     if (!process.stdin.isTTY) {
       throw new UsageError(
@@ -90,15 +95,40 @@ Yours are: ${projects
     }
     // Most recently updated first — the one you are working on is usually near the top.
     const ordered = [...projects].sort((a: any, b: any) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-    chosen = await select(
+    const picked = await select<any>(
       'Which Vercel project does this directory deploy to?',
-      ordered.slice(0, 20).map((p: any, i: number) => ({
-        value: p,
-        label: p.name,
-        detail: p.framework ?? undefined,
-        recommended: i === 0,
-      })),
+      [
+        ...ordered.slice(0, 20).map((p: any, i: number) => ({
+          value: p,
+          label: p.name,
+          detail: p.framework ?? undefined,
+          recommended: i === 0,
+        })),
+        { value: CREATE, label: '+ Create a new project', detail: 'on Vercel, from here' },
+      ],
     );
+
+    if (picked === CREATE) {
+      const suggested = basename(cwd);
+      const name = await ask('Project name:', suggested);
+      if (!name) throw new UsageError('A project name is required.');
+
+      // Offer the git remote, since a project with no repo never deploys on push.
+      const detectedRepo = githubRemote('origin', cwd);
+      const repo = await ask('GitHub repo to deploy from (blank for none):', detectedRepo ?? '');
+
+      chosen = await vercel.createProject({
+        name,
+        framework: str(args.flags, 'framework'),
+        gitRepo: repo || undefined,
+      });
+      success(`Created ${c.bold(chosen.name)} on Vercel`);
+      if (!repo) {
+        info(c.dim('  No repo linked, so pushes will not deploy it automatically.'));
+      }
+    } else {
+      chosen = picked;
+    }
   }
 
   const path = writeVercelLink(
@@ -182,7 +212,7 @@ export async function vercelCommand(args: ParsedArgs): Promise<void> {
         `Delete project ${c.bold(name)} and all its deployments?`,
         bool(args.flags, 'yes', 'y'),
       );
-      if (!ok) return info('Cancelled. Nothing was deleted.');
+      if (!ok) throw new CancelledError('Cancelled. Nothing was deleted.');
       await vercel.deleteProject(name);
       success(`Deleted ${name}.`);
       return;
@@ -250,7 +280,7 @@ export async function vercelCommand(args: ParsedArgs): Promise<void> {
       out(`${c.dim('source ')} ${latest.url ? `https://${latest.url}` : latest.uid}`);
       out(`${c.dim('target ')} ${target}`);
       const ok = await confirm(`Redeploy to ${target}?`, bool(args.flags, 'yes', 'y'));
-      if (!ok) return info('Not redeployed.');
+      if (!ok) throw new CancelledError('Not redeployed.');
 
       const created = await vercel.redeploy(latest.uid ?? latest.id, project, target);
       success(`Redeploying — ${created.url ? `https://${created.url}` : created.id}`);
@@ -322,7 +352,7 @@ export async function vercelCommand(args: ParsedArgs): Promise<void> {
       if (!match) throw new UsageError(`No variable "${key}" on ${project}.`, `dv vercel env list ${project}`);
 
       const ok = await confirm(`Remove ${c.bold(key)} from ${project}?`, bool(args.flags, 'yes', 'y'));
-      if (!ok) return info('Not removed.');
+      if (!ok) throw new CancelledError('Not removed.');
       await vercel.removeEnv(project, match.id);
       success(`Removed ${key}.`);
       return;
@@ -365,7 +395,7 @@ export async function vercelCommand(args: ParsedArgs): Promise<void> {
       const domain = rest[1] ?? str(args.flags, 'domain');
       if (!domain) throw new UsageError('Which domain?', 'dv vercel domain rm my-app example.com');
       const ok = await confirm(`Remove ${c.bold(domain)} from ${project}?`, bool(args.flags, 'yes', 'y'));
-      if (!ok) return info('Not removed.');
+      if (!ok) throw new CancelledError('Not removed.');
       await vercel.removeDomain(project, domain);
       success(`Removed ${domain}.`);
       return;

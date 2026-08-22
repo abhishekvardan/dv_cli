@@ -9,17 +9,20 @@
 
 import { UsageError } from '../cli/errors.js';
 import { bool, str, unmanglePath, type ParsedArgs } from '../cli/args.js';
-import { c, info, json, out, success, table, warn } from '../cli/ui.js';
-import { readConfig, writeConfig, getCredential } from '../config/store.js';
+import { ask, c, info, json, out, promptSecret, success, table, warn } from '../cli/ui.js';
+import { readConfig, writeConfig, getCredential, setOAuthApp } from '../config/store.js';
 import {
   allProviders,
   BUILT_IN,
   getProvider,
+  providerIds,
+  resolveApp,
   type AuthMethod,
   type AuthStyle,
   type CustomProviderRecord,
 } from '../auth/providers.js';
 import { identify } from '../api/client.js';
+import { authCommand } from './auth.js';
 
 const METHODS: AuthMethod[] = ['device', 'loopback', 'token', 'basic', 'header', 'client_credentials'];
 
@@ -46,6 +49,86 @@ function parseHeaders(raw: string | string[] | boolean | undefined): Record<stri
     headers[entry.slice(0, colon).trim()] = entry.slice(colon + 1).trim();
   }
   return headers;
+}
+
+/**
+ * What a connector needs before it can be used, in the order you would supply it.
+ *
+ * `dv connect <name>` exists because "connect" is the word people reach for, and
+ * being told "unknown command" at that moment is the worst possible answer — the user
+ * knows exactly what they want and the tool refuses to help. This walks through the
+ * requirements, asks for each one, and finishes by actually signing in.
+ */
+async function setupConnector(providerId: string, args: ParsedArgs): Promise<void> {
+  const provider = getProvider(providerId);
+  if (!provider) {
+    throw new UsageError(
+      `No connector "${providerId}".`,
+      `Available: ${providerIds().join(', ')}\nOr define your own: dv connect add ${providerId} --api-base https://…`,
+    );
+  }
+
+  const app = resolveApp(provider.id);
+  const needsId = provider.methods.some((m) => m === 'device' || m === 'loopback' || m === 'client_credentials');
+  const needsSecret = Boolean(provider.needsClientSecret);
+
+  info('');
+  info(c.bold(`Connecting ${provider.label}`));
+  info('');
+
+  // Say what is required before asking for anything, so the user knows how long this
+  // is going to take and can go and get the values first.
+  const wants: string[] = [];
+  if (needsId && !app.clientId) wants.push('an OAuth client id');
+  if (needsSecret && !app.clientSecret) wants.push('a client secret');
+  if (!needsId) wants.push(provider.methods.includes('basic') ? 'an email and API token' : 'an API token');
+
+  info(`  ${provider.label} needs ${wants.join(' and ')}.`);
+  if (provider.oauthAppUrl ?? provider.appSetupUrl) {
+    info(`  Get it at ${c.blue(provider.oauthAppUrl ?? provider.appSetupUrl!)}`);
+  }
+  if (provider.setupHint) {
+    info('');
+    for (const line of provider.setupHint.split('\n')) info(c.dim(`  ${line}`));
+  }
+  info('');
+
+  // Collect the OAuth app values first — the login cannot start without them.
+  if (needsId && !app.clientId) {
+    if (!process.stdin.isTTY) {
+      throw new UsageError(
+        `${provider.label} needs an OAuth client id.`,
+        `dv config set ${provider.id}.clientId <id>`,
+      );
+    }
+    const clientId = await ask('Client id:');
+    if (!clientId) throw new UsageError('A client id is required.');
+    setOAuthApp(provider.id, { clientId });
+    success('Saved the client id.');
+  }
+
+  if (needsSecret && !resolveApp(provider.id).clientSecret) {
+    if (!process.stdin.isTTY) {
+      throw new UsageError(
+        `${provider.label} needs a client secret.`,
+        `dv config set ${provider.id}.clientSecret <secret>`,
+      );
+    }
+    // Hidden: a secret echoed here ends up in scrollback and screen recordings.
+    const clientSecret = await promptSecret('Client secret:');
+    if (!clientSecret) throw new UsageError('A client secret is required.');
+    setOAuthApp(provider.id, { clientSecret });
+    success('Saved the client secret.');
+  }
+
+  // Hand off to the real login, so there is one implementation of every flow.
+  await authCommand({
+    ...args,
+    command: ['auth', 'login', provider.id],
+    positional: [],
+    // The requirements were already spelled out above; the login would repeat them.
+    flags: { ...args.flags, __hintShown: true },
+  });
 }
 
 export async function connectCommand(args: ParsedArgs): Promise<void> {
@@ -81,7 +164,9 @@ export async function connectCommand(args: ParsedArgs): Promise<void> {
         { header: '', value: (p) => (p.custom ? c.cyan('custom') : '') },
       ]);
       info('');
-      info(c.dim(`  ${providers.length} connectors · dv connect add <id> to define your own`));
+      info(c.dim(`  ${providers.length} connectors`));
+      info(c.dim('  dv connect <name>      guided setup for one'));
+      info(c.dim('  dv connect add <name>  define your own'));
       return;
     }
 
@@ -108,7 +193,7 @@ export async function connectCommand(args: ParsedArgs): Promise<void> {
       if (provider.docs) out(`${c.dim('docs       ')} ${provider.docs}`);
       if (provider.setupHint) {
         out('');
-        for (const line of provider.setupHint.split('\n')) out(c.yellow(line));
+    for (const line of provider.setupHint.split('\n')) info(c.dim(`  ${line}`));
       }
       return;
     }
@@ -222,10 +307,14 @@ export async function connectCommand(args: ParsedArgs): Promise<void> {
       return;
     }
 
-    default:
+    default: {
+      // `dv connect supabase` is a provider name, not a mistyped subcommand.
+      if (getProvider(sub)) return setupConnector(sub, args);
       throw new UsageError(
         `Unknown connect command "${sub}".`,
-        'Try: list, show, add, rm, test',
+        `Try: list, show, add, rm, test
+Or name a connector: dv connect ${providerIds()[0]}`,
       );
+    }
   }
 }

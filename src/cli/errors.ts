@@ -18,6 +18,14 @@ export const EXIT = {
   provider: 4,
   /** Nothing matched. Useful for `if dv gh repo x; then`. */
   notFound: 5,
+  /**
+   * The action was declined and nothing happened.
+   *
+   * Distinct from success because it usually is not one: an agent or a script running
+   * a write without `--yes` gets a refusal, and exiting 0 would have it report the
+   * change as made. Distinct from failure because nothing went wrong.
+   */
+  cancelled: 6,
 } as const;
 
 export type ExitCode = (typeof EXIT)[keyof typeof EXIT];
@@ -56,6 +64,14 @@ export class ProviderError extends CliError {
   ) {
     super(message, EXIT.provider, hint);
     this.name = 'ProviderError';
+  }
+}
+
+/** Raised when a confirmation was declined, or refused for want of a terminal. */
+export class CancelledError extends CliError {
+  constructor(message = 'Cancelled. Nothing was changed.', hint?: string) {
+    super(message, EXIT.cancelled, hint);
+    this.name = 'CancelledError';
   }
 }
 

@@ -141,3 +141,44 @@ export function heading(text: string): void {
 // Prompts live in interactive.ts — they need raw-mode teardown that the rest of the
 // output layer has no business knowing about. Re-exported so call sites keep one import.
 export { prompt, confirm, select, promptSecret, ask, type Choice } from './interactive.js';
+
+/**
+ * Truncate to a visible width, leaving ANSI sequences intact.
+ *
+ * Essential for anything that redraws by moving the cursor up N lines. A row wider
+ * than the terminal wraps onto two physical lines, so "up N" lands in the wrong place
+ * and every redraw appends instead of replacing — which looks exactly like the arrow
+ * keys adding entries rather than moving the highlight.
+ */
+export function clipVisible(text: string, max: number): string {
+  if (max <= 0) return '';
+  let visible = 0;
+  let out = '';
+  let i = 0;
+  let sawAnsi = false;
+
+  while (i < text.length) {
+    if (text[i] === '\u001b') {
+      // Copy the whole escape sequence without counting it toward the width.
+      const end = text.indexOf('m', i);
+      if (end === -1) break;
+      out += text.slice(i, end + 1);
+      sawAnsi = true;
+      i = end + 1;
+      continue;
+    }
+    if (visible >= max) {
+      // Close any open styling so the truncation cannot leak colour onto the next line.
+      return sawAnsi ? `${out}\u001b[0m` : out;
+    }
+    out += text[i];
+    visible++;
+    i++;
+  }
+  return sawAnsi ? `${out}\u001b[0m` : out;
+}
+
+/** Usable terminal width, with a sane default when it cannot be determined. */
+export function terminalWidth(): number {
+  return process.stderr.columns && process.stderr.columns > 20 ? process.stderr.columns : 80;
+}

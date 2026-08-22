@@ -14,7 +14,7 @@
  *    hence the separate health check.
  */
 
-import { UsageError } from '../cli/errors.js';
+import { UsageError, CancelledError } from '../cli/errors.js';
 import { bool, negated, num, str, type ParsedArgs } from '../cli/args.js';
 import { c, confirm, info, json, out, success } from '../cli/ui.js';
 import { runWorkflow, summary, type Step } from '../workflow/engine.js';
@@ -348,7 +348,7 @@ export async function shipCommand(args: ParsedArgs): Promise<void> {
 
     // This pushes commits and opens a PR, so it confirms unless told not to.
     const ok = await confirm('\nShip it?', bool(args.flags, 'yes', 'y'));
-    if (!ok) return info('Cancelled. Nothing was pushed.');
+    if (!ok) throw new CancelledError('Cancelled. Nothing was pushed.');
   }
 
   const result = await runWorkflow(steps(), ctx, { title: 'DevOS Ship', dryRun });

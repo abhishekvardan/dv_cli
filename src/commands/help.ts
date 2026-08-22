@@ -1,6 +1,26 @@
+import { createRequire } from 'node:module';
+
 import { c, out } from '../cli/ui.js';
 
-export const VERSION = '0.1.0';
+/**
+ * Read from package.json rather than duplicated here.
+ *
+ * A hardcoded constant drifts the moment the package version is bumped, and a CLI
+ * that misreports its own version makes every bug report ambiguous — this one was
+ * already claiming 0.1.0 from a 1.0.0 package.
+ *
+ * Same relative depth from `src/commands/` and `dist/commands/`, so it resolves in
+ * development and from an installed package alike.
+ */
+const VERSION_FALLBACK = '0.0.0';
+export const VERSION: string = (() => {
+  try {
+    const require = createRequire(import.meta.url);
+    return (require('../../package.json') as { version?: string }).version ?? VERSION_FALLBACK;
+  } catch {
+    return VERSION_FALLBACK;
+  }
+})();
 
 const SECTIONS: Array<{ title: string; rows: Array<[string, string]> }> = [
   {
@@ -18,6 +38,9 @@ const SECTIONS: Array<{ title: string; rows: Array<[string, string]> }> = [
       ['dv auth login <p> --method token', 'Pick a different way in'],
       ['dv auth token <provider>', 'Save a personal access token instead'],
       ['dv auth status', 'What is connected, and for how long'],
+      ['dv auth accounts', 'Every account, per provider'],
+      ['dv auth switch <p> <account>', 'Change the active account'],
+      ['dv auth login <p>', 'Add an account - named after who it is'],
       ['dv auth scopes <provider>', 'What the grant actually permits'],
       ['dv config list', 'OAuth client ids, and the env vars for them'],
       ['dv config set github.clientId <id>', 'Point at your own OAuth app'],
@@ -81,8 +104,20 @@ const SECTIONS: Array<{ title: string; rows: Array<[string, string]> }> = [
     ],
   },
   {
+    title: 'Database (Supabase)',
+    rows: [
+      ['dv db projects', 'Your databases, across providers'],
+      ['dv db project create <name>', 'New Supabase project (asks first)'],
+      ['dv db use <ref>', 'Pick which one queries run against'],
+      ['dv db tables', 'Tables, with sizes'],
+      ['dv db describe <table>', 'Columns, types, defaults'],
+      ['dv db query "select ..."', 'Run SQL (writes ask first)'],
+    ],
+  },
+  {
     title: 'Any other service',
     rows: [
+      ['dv connect <name>', 'Guided setup - asks for what it needs'],
       ['dv connect list', 'Every connector and how to connect it'],
       ['dv connect show <id>', 'Base URL, auth style, setup steps'],
       ['dv connect add <id> --api-base …', 'Define a connector of your own'],
@@ -102,6 +137,7 @@ const SECTIONS: Array<{ title: string; rows: Array<[string, string]> }> = [
 const FLAGS: Array<[string, string]> = [
   ['--json', 'Machine-readable output on stdout'],
   ['--limit <n>', 'How many results'],
+  ['--as <account>', 'Use, or nickname, a specific account'],
   ['--yes, -y', 'Skip confirmations — for scripts'],
   ['--quiet, -q', 'Data only, no commentary'],
   ['--help, -h', 'This help, or help for a command'],

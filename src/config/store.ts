@@ -42,6 +42,8 @@ export interface OAuthApp {
    * Google's "Web application" type does, and a random port can never match.
    */
   redirectPort?: string;
+  /** Default Supabase project for `dv db`, set by `dv db use`. */
+  projectRef?: string;
   /**
    * Overrides the connector's base URL.
    *
@@ -126,47 +128,209 @@ export function credentialsArePrivate(): boolean {
   return (mode & 0o077) === 0;
 }
 
-type CredentialFile = { version: 1; providers: Record<string, StoredCredential> };
+/**
+ * Credentials, keyed by provider and then by account.
+ *
+ * Version 2. Version 1 stored one credential per provider, which made a second GitHub
+ * or Google login impossible without logging the first one out — and most people have
+ * a work account and a personal one. Old files are migrated on read, so an existing
+ * login keeps working and simply becomes that provider's first account.
+ */
+interface ProviderCredentials {
+  /** Which account commands use when none is named. */
+  active?: string;
+  accounts: Record<string, StoredCredential>;
+}
+
+type CredentialFileV1 = { version?: 1; providers: Record<string, StoredCredential> };
+type CredentialFile = { version: 2; providers: Record<string, ProviderCredentials> };
+
+/**
+ * A one-off account override, from the global `--as` flag.
+ *
+ * Held here rather than threaded through every call site because the alternative is an
+ * account parameter on every API function in the codebase, and it is genuinely
+ * request-scoped: one CLI invocation, one choice.
+ */
+let accountOverride: string | undefined;
+
+export function setAccountOverride(name: string | undefined): void {
+  accountOverride = name;
+}
+
+export function getAccountOverride(): string | undefined {
+  return accountOverride;
+}
+
+function migrate(raw: any): CredentialFile {
+  if (raw?.version === 2 && raw.providers) return raw as CredentialFile;
+
+  // v1: a flat credential per provider. Its account name comes from the identity we
+  // recorded at login, falling back to "default" so the entry is never lost.
+  const old = (raw ?? {}) as CredentialFileV1;
+  const providers: Record<string, ProviderCredentials> = {};
+  for (const [id, credential] of Object.entries(old.providers ?? {})) {
+    if (!credential || typeof credential !== 'object') continue;
+    const name = (credential as StoredCredential).account || 'default';
+    providers[id] = { active: name, accounts: { [name]: credential as StoredCredential } };
+  }
+  return { version: 2, providers };
+}
 
 function readCredentialFile(): CredentialFile {
-  const data = readJson<Partial<CredentialFile>>(credentialsPath(), { version: 1, providers: {} });
-  return { version: 1, providers: data.providers ?? {} };
+  return migrate(readJson<any>(credentialsPath(), { version: 2, providers: {} }));
 }
 
-export function getCredential(provider: string): StoredCredential | undefined {
-  return readCredentialFile().providers[provider];
-}
-
-export function listCredentials(): Record<string, StoredCredential> {
-  return readCredentialFile().providers;
+/** Accounts stored for a provider, and which one is active. */
+export function listAccounts(provider: string): { active?: string; names: string[] } {
+  const entry = readCredentialFile().providers[provider];
+  return { active: entry?.active, names: Object.keys(entry?.accounts ?? {}) };
 }
 
 /**
- * Merge a patch into one provider's credential.
+ * Resolve which account a command should use.
+ *
+ * `--as` wins, then the provider's active account, then its only account. Naming an
+ * account that does not exist is an error rather than a silent fallback — quietly
+ * using a different account than the one asked for is how you push to the wrong repo.
+ */
+export function resolveAccount(provider: string, explicit?: string): string | undefined {
+  const entry = readCredentialFile().providers[provider];
+  if (!entry) return undefined;
+
+  const names = Object.keys(entry.accounts);
+  const wanted = explicit ?? accountOverride;
+
+  if (wanted) {
+    if (!names.includes(wanted)) {
+      throw new CliError(
+        `No "${wanted}" account for ${provider}.`,
+        2,
+        names.length
+          ? `Available: ${names.join(', ')}`
+          : `dv auth login ${provider} --as ${wanted}`,
+      );
+    }
+    return wanted;
+  }
+  if (entry.active && names.includes(entry.active)) return entry.active;
+  return names[0];
+}
+
+export function getCredential(provider: string, account?: string): StoredCredential | undefined {
+  const entry = readCredentialFile().providers[provider];
+  if (!entry) return undefined;
+  const name = resolveAccount(provider, account);
+  return name ? entry.accounts[name] : undefined;
+}
+
+/** Every provider's active credential, for `dv auth status`. */
+export function listCredentials(): Record<string, StoredCredential> {
+  const file = readCredentialFile();
+  const out: Record<string, StoredCredential> = {};
+  for (const id of Object.keys(file.providers)) {
+    const credential = getCredential(id);
+    if (credential) out[id] = credential;
+  }
+  return out;
+}
+
+/**
+ * Merge a patch into one account's credential.
  *
  * Read-modify-write against the file rather than an in-memory copy: two commands can
- * run at once, and rebuilding the whole file from a stale snapshot is how you lose
- * an unrelated provider's token.
+ * run at once, and rebuilding the whole file from a stale snapshot is how you lose an
+ * unrelated provider's token.
  */
-export function saveCredential(provider: string, patch: StoredCredential): StoredCredential {
+export function saveCredential(
+  provider: string,
+  patch: StoredCredential,
+  account?: string,
+): StoredCredential {
   const file = readCredentialFile();
+  const entry = (file.providers[provider] ??= { accounts: {} });
+
+  // A new login with no name given becomes "default" until identification renames it.
+  // An explicit name is where to write, not a name to look up: going through
+  // resolveAccount would reject it at the very moment it is being created.
+  const name = account ?? resolveAccountSafely(provider) ?? 'default';
   const merged: StoredCredential = {
-    ...file.providers[provider],
+    ...entry.accounts[name],
     ...patch,
-    obtainedAt: patch.obtainedAt ?? file.providers[provider]?.obtainedAt ?? new Date().toISOString(),
+    obtainedAt: patch.obtainedAt ?? entry.accounts[name]?.obtainedAt ?? new Date().toISOString(),
   };
-  file.providers[provider] = merged;
+  entry.accounts[name] = merged;
+  entry.active ??= name;
   writeJsonSecurely(credentialsPath(), file);
   return merged;
 }
 
-export function deleteCredential(provider: string): boolean {
+/**
+ * Rename an account, used once a login reveals who it belongs to.
+ *
+ * Logging in produces a credential before we know the identity, so it lands under a
+ * placeholder and is renamed here — that is what makes `dv auth switch github octocat`
+ * possible without the user inventing names.
+ */
+/** Like resolveAccount, but returns undefined instead of throwing on an unknown name. */
+function resolveAccountSafely(provider: string): string | undefined {
+  try {
+    return resolveAccount(provider);
+  } catch {
+    return undefined;
+  }
+}
+
+export function renameAccount(provider: string, from: string, to: string): void {
+  if (from === to) return;
   const file = readCredentialFile();
-  if (!file.providers[provider]) return false;
-  delete file.providers[provider];
+  const entry = file.providers[provider];
+  const credential = entry?.accounts[from];
+  if (!entry || !credential) return;
+
+  delete entry.accounts[from];
+  entry.accounts[to] = credential;
+  if (entry.active === from) entry.active = to;
+  writeJsonSecurely(credentialsPath(), file);
+}
+
+export function setActiveAccount(provider: string, account: string): void {
+  const file = readCredentialFile();
+  const entry = file.providers[provider];
+  if (!entry?.accounts[account]) {
+    throw new CliError(
+      `No "${account}" account for ${provider}.`,
+      2,
+      `Available: ${Object.keys(entry?.accounts ?? {}).join(', ') || 'none'}`,
+    );
+  }
+  entry.active = account;
+  writeJsonSecurely(credentialsPath(), file);
+}
+
+/** Remove one account, or the whole provider when no account is named. */
+export function deleteCredential(provider: string, account?: string): boolean {
+  const file = readCredentialFile();
+  const entry = file.providers[provider];
+  if (!entry) return false;
+
+  if (!account) {
+    delete file.providers[provider];
+    writeJsonSecurely(credentialsPath(), file);
+    return true;
+  }
+  if (!entry.accounts[account]) return false;
+
+  delete entry.accounts[account];
+  const remaining = Object.keys(entry.accounts);
+  if (remaining.length === 0) delete file.providers[provider];
+  // Removing the active account must promote another, or every later command reports
+  // "not connected" while a perfectly good credential sits in the file.
+  else if (entry.active === account) entry.active = remaining[0];
   writeJsonSecurely(credentialsPath(), file);
   return true;
 }
+
 
 export function readConfig(): DvConfig {
   return readJson<DvConfig>(configPath(), {});
@@ -191,6 +355,7 @@ export function getOAuthApp(provider: string): OAuthApp {
     clientSecret: process.env[`DV_${upper}_CLIENT_SECRET`] || stored.clientSecret,
     apiBase: process.env[`DV_${upper}_API_BASE`] || stored.apiBase,
     redirectPort: process.env[`DV_${upper}_REDIRECT_PORT`] || stored.redirectPort,
+    projectRef: process.env[`DV_${upper}_PROJECT_REF`] || stored.projectRef,
   };
 }
 

@@ -6,7 +6,8 @@
  * anything to do with credentials in auth/ and config/.
  */
 
-import { bool, parseArgs } from './cli/args.js';
+import { bool, parseArgs, str } from './cli/args.js';
+import { setAccountOverride } from './config/store.js';
 import { CliError, EXIT } from './cli/errors.js';
 import { c, fail, info, setQuiet } from './cli/ui.js';
 import { printHelp, VERSION } from './commands/help.js';
@@ -17,6 +18,8 @@ import { calendarCommand, gmailCommand } from './commands/gmail.js';
 import { linkedinCommand } from './commands/misc.js';
 import { vercelCommand } from './commands/vercel.js';
 import { shipCommand } from './commands/ship.js';
+import { dbCommand } from './commands/db.js';
+import { gitCommand } from './commands/git.js';
 import { connectCommand } from './commands/connect.js';
 import { apiCommand } from './commands/api.js';
 
@@ -40,6 +43,9 @@ const COMMANDS: Record<string, Handler> = {
   connectors: connectCommand,
   api: apiCommand,
   // Cross-service workflows: the part no single provider's CLI can do.
+  git: gitCommand,
+  db: dbCommand,
+  sql: dbCommand,
   ship: shipCommand,
   deploy: shipCommand,
   // `dv status` is the first thing anyone runs, so it gets a top-level name
@@ -69,6 +75,10 @@ function finish(code: number): void {
 async function main(argv: string[]): Promise<number> {
   const args = parseArgs(argv);
   setQuiet(bool(args.flags, 'quiet', 'q'));
+
+  // `--as work` picks which account a command runs under, for every provider it
+  // touches. Set once here rather than passed through every API call.
+  setAccountOverride(str(args.flags, 'as', 'account'));
 
   if (bool(args.flags, 'version') || args.command[0] === 'version') {
     process.stdout.write(`${VERSION}\n`);
