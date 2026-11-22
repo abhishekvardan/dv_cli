@@ -11,7 +11,10 @@ describe('redact', () => {
 
   it('masks a credential even under an innocent key name', () => {
     // A token is just a string; the key it arrives under is not always a clue.
-    const masked = redact({ value: ['sbp', '_', '0123456789abcdef'.repeat(2), '01234567'].join('') }) as any;
+    // Assembled at runtime: written out whole, this fake value has the exact shape of a
+    // Supabase token, and GitHub's push protection rejects the commit containing it.
+    const fake = ['sbp', '_', '0123456789abcdef'.repeat(2), '01234567'].join('');
+    const masked = redact({ value: fake }) as any;
     expect(masked.value).not.toContain('0123456789abcdef');
   });
 
