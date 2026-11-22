@@ -146,6 +146,68 @@ export async function supabaseCreateProject(input: CreateProjectInput): Promise<
   });
 }
 
+/* ───────────────────── Supabase Edge Functions ───────────────────── */
+
+export interface EdgeFunction {
+  id?: string;
+  slug: string;
+  name?: string;
+  status?: string;
+  version?: number;
+  verify_jwt?: boolean;
+}
+
+export async function supabaseFunctions(ref: string): Promise<EdgeFunction[]> {
+  const data = await supabaseCall(`/v1/projects/${encodeURIComponent(ref)}/functions`);
+  return Array.isArray(data) ? data : [];
+}
+
+export async function supabaseFunction(ref: string, slug: string): Promise<EdgeFunction | null> {
+  return supabaseCall(
+    `/v1/projects/${encodeURIComponent(ref)}/functions/${encodeURIComponent(slug)}`,
+  ).catch(() => null);
+}
+
+/**
+ * Create or update an Edge Function from source.
+ *
+ * There is no bundler step: Deno resolves imports at deploy time from the URLs in the
+ * source, so a single file is a complete deployable unit. A function importing local
+ * relative files is the exception, and the command warns rather than shipping something
+ * that only fails once invoked.
+ */
+export async function supabaseDeployFunction(
+  ref: string,
+  input: { slug: string; name?: string; body: string; verifyJwt?: boolean },
+): Promise<EdgeFunction> {
+  const existing = await supabaseFunction(ref, input.slug);
+  const payload = {
+    slug: input.slug,
+    name: input.name ?? input.slug,
+    body: input.body,
+    verify_jwt: input.verifyJwt ?? true,
+  };
+
+  // PATCH for an existing slug, POST for a new one: POSTing over an existing function
+  // is rejected rather than treated as an update.
+  return existing
+    ? supabaseCall(
+        `/v1/projects/${encodeURIComponent(ref)}/functions/${encodeURIComponent(input.slug)}`,
+        { method: 'PATCH', body: JSON.stringify(payload) },
+      )
+    : supabaseCall(`/v1/projects/${encodeURIComponent(ref)}/functions`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+}
+
+export async function supabaseDeleteFunction(ref: string, slug: string): Promise<void> {
+  await supabaseCall(
+    `/v1/projects/${encodeURIComponent(ref)}/functions/${encodeURIComponent(slug)}`,
+    { method: 'DELETE' },
+  );
+}
+
 /* ─────────────────────────────── Neon ─────────────────────────────── */
 
 /**

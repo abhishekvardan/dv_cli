@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 
 import { UsageError, CancelledError } from '../cli/errors.js';
 import { bool, num, str, type ParsedArgs } from '../cli/args.js';
+import { emit, outputOpts, wantsJson } from '../cli/output.js';
 import { c, confirm, info, json, out, relative, success, table } from '../cli/ui.js';
 import { calendar, gmail } from '../api/google.js';
 import { missingScopes } from '../auth/tokens.js';
@@ -19,7 +20,8 @@ function shortAddress(header: string): string {
 
 export async function gmailCommand(args: ParsedArgs): Promise<void> {
   const sub = args.command[1] ?? 'search';
-  const asJson = bool(args.flags, 'json');
+  // --snapshot and --diff consume the JSON payload, so they imply it.
+  const asJson = wantsJson(args.flags);
   const arg1 = args.command[2] ?? args.positional[0];
 
   switch (sub) {
@@ -29,7 +31,7 @@ export async function gmailCommand(args: ParsedArgs): Promise<void> {
       // Gmail query means.
       const query = arg1 ?? str(args.flags, 'query', 'q') ?? 'in:inbox';
       const messages = await gmail.search(query, num(args.flags, 'limit', 20));
-      if (asJson) return json(messages);
+      if (asJson) return emit(messages, outputOpts(args.flags, 'gmail'));
       if (messages.length === 0) return info(`Nothing matched "${query}".`);
 
       table(messages, [
@@ -48,7 +50,7 @@ export async function gmailCommand(args: ParsedArgs): Promise<void> {
       const id = arg1 ?? str(args.flags, 'id');
       if (!id) throw new UsageError('Which message?', 'dv gmail read 18f2a…   (ids come from `dv gmail search`)');
       const msg = await gmail.read(id);
-      if (asJson) return json(msg);
+      if (asJson) return emit(msg, outputOpts(args.flags, 'gmail'));
 
       out(c.bold(msg.subject));
       out(`${c.dim('from')} ${msg.from}`);
@@ -62,7 +64,7 @@ export async function gmailCommand(args: ParsedArgs): Promise<void> {
 
     case 'labels': {
       const labels = await gmail.labels();
-      if (asJson) return json(labels);
+      if (asJson) return emit(labels, outputOpts(args.flags, 'gmail'));
       table(labels, [
         { header: 'label', value: (l: any) => l.name },
         { header: 'type', value: (l: any) => c.dim(l.type ?? '') },
@@ -129,7 +131,7 @@ export async function gmailCommand(args: ParsedArgs): Promise<void> {
 
     case 'profile': {
       const profile = await gmail.profile();
-      if (asJson) return json(profile);
+      if (asJson) return emit(profile, outputOpts(args.flags, 'gmail'));
       out(`${c.dim('address')} ${profile.emailAddress}`);
       out(`${c.dim('messages')} ${profile.messagesTotal}`);
       out(`${c.dim('threads ')} ${profile.threadsTotal}`);
@@ -146,7 +148,8 @@ export async function gmailCommand(args: ParsedArgs): Promise<void> {
 
 export async function calendarCommand(args: ParsedArgs): Promise<void> {
   const sub = args.command[1] ?? 'events';
-  const asJson = bool(args.flags, 'json');
+  // --snapshot and --diff consume the JSON payload, so they imply it.
+  const asJson = wantsJson(args.flags);
 
   switch (sub) {
     case 'events':
@@ -155,7 +158,7 @@ export async function calendarCommand(args: ParsedArgs): Promise<void> {
         days: num(args.flags, 'days', 7),
         limit: num(args.flags, 'limit', 25),
       });
-      if (asJson) return json(events);
+      if (asJson) return emit(events, outputOpts(args.flags, 'gmail'));
       if (events.length === 0) return info('Nothing scheduled in that window.');
 
       table(events, [
@@ -187,7 +190,7 @@ export async function calendarCommand(args: ParsedArgs): Promise<void> {
         startHour: num(args.flags, 'start', 9),
         endHour: num(args.flags, 'end', 18),
       });
-      if (asJson) return json(slots);
+      if (asJson) return emit(slots, outputOpts(args.flags, 'gmail'));
       if (slots.length === 0) return info('No gaps that long in the window.');
 
       table(slots, [

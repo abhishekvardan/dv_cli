@@ -8,7 +8,7 @@
  */
 
 import { c, clipVisible, info, terminalWidth, warn } from './ui.js';
-import { CliError, EXIT } from './errors.js';
+import { CliError, DryRunError, EXIT } from './errors.js';
 
 /** Read a line from stdin. Used for confirmations, never for secrets. */
 export async function prompt(question: string): Promise<string> {
@@ -30,8 +30,42 @@ export async function prompt(question: string): Promise<string> {
  * Returns true without asking when `--yes` was passed. A non-interactive run without
  * `--yes` is refused rather than assumed, because the caller cannot see the question.
  */
+/**
+ * Dry-run mode, set once from the global `--dry-run` flag.
+ *
+ * Enforced at `confirm()` rather than in each command because every write already
+ * passes through it, and every write already prints what it is about to do just above
+ * — which is exactly the preview a dry run should show.
+ */
+let dryRun = false;
+export function setDryRun(value: boolean): void {
+  dryRun = value;
+}
+export function isDryRun(): boolean {
+  return dryRun;
+}
+
+/**
+ * Set when a policy rule demands a real confirmation for this command.
+ *
+ * `--yes` exists so a person can skip a prompt they have already thought about. A policy
+ * rule exists because they decided in advance that this particular operation should
+ * always be looked at. Letting the flag satisfy the rule would mean the protection
+ * evaporates in exactly the unattended runs it was written for, so the rule wins and the
+ * flag is ignored.
+ */
+let requireRealConfirm = false;
+export function setRequireRealConfirm(value: boolean): void {
+  requireRealConfirm = value;
+}
+
 export async function confirm(question: string, assumeYes: boolean): Promise<boolean> {
-  if (assumeYes) return true;
+  if (dryRun) {
+    // Thrown rather than returned false, so a command cannot carry on and perform a
+    // write after a dry run declined it.
+    throw new DryRunError(`Dry run — would have: ${question.replace(/\?$/, '')}`);
+  }
+  if (assumeYes && !requireRealConfirm) return true;
   if (!process.stdin.isTTY) return false;
   const answer = await prompt(`${question} ${c.dim('[y/N]')}`);
   return /^y(es)?$/i.test(answer);

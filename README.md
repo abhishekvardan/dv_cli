@@ -8,7 +8,87 @@ dv auth login github
 dv gh repo list
 ```
 
-No runtime dependencies. Node 20+.
+Node 20+. Built by **Abhishek Vardan Botta**.
+
+---
+
+## Use with Claude Code (MCP server + plugin)
+
+`dv mcp` runs dv as an MCP server, so Claude Code calls dv's commands as typed tools
+(`gh_pr_list`, `vercel_deploy_redeploy`, `gmail_send`, …) instead of composing shell
+lines. Reads are marked read-only and writes destructive, so you can auto-approve every
+read and still be asked about each write.
+
+**As a plugin** (installs the MCP server and the skill together):
+
+```text
+/plugin marketplace add <path-or-git-url-of-this-repo>
+/plugin install dv@dv
+```
+
+**Or just the MCP server:**
+
+```bash
+npm install -g @abhishekvardanbotta/dv
+claude mcp add dv -- dv mcp                # macOS / Linux
+claude mcp add dv -- cmd /c dv mcp         # Windows
+```
+
+Every tool call runs dv as a child process, so nothing is bypassed: policy rules are
+checked first, every write is journaled (`journal`, `undo` tools), and the exit code is
+reported with its meaning. Write tools preview first and change nothing until called
+again with `confirm: true`. Anything without a dedicated tool is reachable through `run`.
+
+**How this relates to claude.ai connectors.** If you sign in to Claude Code with a
+claude.ai account, connectors you enabled on claude.ai (Gmail, Google Calendar, …) also
+appear in Claude Code as `claude.ai <name>` MCP servers. They do not carry over with API
+key auth. dv's Gmail and Calendar tools overlap with those; the difference is that dv uses
+your own OAuth login, journals what it does, and obeys your `dv policy`. GitHub, Vercel,
+Supabase, `ship` and the undo journal have no connector equivalent.
+
+---
+
+## Using dv from a coding assistant
+
+`dv` is built to be driven by Claude Code, Cursor, or any agent with a terminal —
+stdout/stderr are separated, every command takes `--json`, and the exit codes are a
+contract rather than decoration.
+
+An assistant that has **not** read the skill file treats `dv` as a thin wrapper and
+misses the parts that matter: that exit 6 means nothing happened, that exit 3 should
+never be retried, and that a policy rule is not something to route around. Install it
+once:
+
+```bash
+dv skill install
+```
+
+That copies the bundled skill to `~/.claude/skills/dv/SKILL.md` — no download, it ships
+inside the package. Start a new session afterwards to pick it up.
+
+**[📄 Read or download SKILL.md](https://unpkg.com/@abhishekvardanbotta/dv/SKILL.md)**
+· [via jsDelivr](https://cdn.jsdelivr.net/npm/@abhishekvardanbotta/dv/SKILL.md)
+
+For a different assistant, or to place it by hand:
+
+```bash
+dv skill show                      # print it
+dv skill path                      # where the bundled copy lives
+dv skill install --to ./AGENTS.md  # or anywhere else
+
+# without installing dv first
+curl -o SKILL.md https://unpkg.com/@abhishekvardanbotta/dv/SKILL.md
+```
+
+The short version, if you are an assistant reading this instead:
+
+| Rule | |
+|---|---|
+| `--json` whenever you intend to parse | Data on stdout, progress on stderr |
+| `--yes` on every write | Without a terminal it refuses rather than hanging |
+| Branch on the exit code | `0` ok · `1` failed · `2` bad usage · `3` not authed · `4` provider refused · `5` not found · `6` declined |
+| `dv doctor` before debugging by hand | Checks accounts, repo, deploy, env and database in one pass |
+| Never work around `dv policy` | `--yes` does not satisfy a rule, and there is no bypass flag |
 
 ---
 
@@ -275,6 +355,18 @@ Deleting a repository is the exception: it makes you type the full name, because
 and an atomic rename, so a process killed mid-write cannot leave a truncated
 credential file. `dv auth status` warns if the permissions ever loosen.
 
+Tokens are stored **in plaintext**, protected by file permissions rather than
+encryption — the same model as `gh`, `aws` and `gcloud`, chosen because a keychain
+binding means a native dependency on every platform. Anything running as you can read
+them. On Windows there are no POSIX permission bits, so the permission check is skipped
+rather than printing a warning you could not act on; the file inherits your profile's
+ACL, which restricts it to your account, SYSTEM and Administrators.
+
+A value captured so that `dv undo` can restore it — the contents of a deleted
+environment variable, for instance — goes to `~/.dv/undo-secrets.json` (also `0600`,
+expiring after 14 days) and **never** into the journal. The journal is meant to be read
+and pasted around; it holds an opaque handle instead.
+
 Client ids live separately in `~/.dv/config.json` — a client id is a public
 identifier, a token is not, and they should not share a file.
 
@@ -294,7 +386,7 @@ commands share a single refresh rather than each spending the refresh token.
 ```bash
 npm install
 npm run dev -- gh repos     # run from source
-npm test                    # 53 tests
+npm test                    # 243 tests
 npm run build
 ```
 

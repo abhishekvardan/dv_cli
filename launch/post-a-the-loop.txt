@@ -1,0 +1,37 @@
+Eight times in a row last week, I did this by hand:
+
+deploy → curl the endpoint → read a 500 → guess at the cause → redeploy → curl again.
+
+Because every CLI I use is request/response. You tell it to do one thing, it does that
+one thing, and finding out whether it actually worked is your problem.
+
+So I built the CLI I wanted instead.
+
+  dv vercel deploy create --dir . \
+    --verify "curl -f {url}/api/health" \
+    --on-fail rollback
+
+Deploy, wait for it to go live, run the check, and if the check fails, put the last
+healthy build back. One command. No human standing in as the control loop.
+
+Three things had to exist before I'd trust that running unattended:
+
+An undo journal — every write recorded with how to reverse it. `dv undo <id>` works on
+env vars, DNS records, domains and rollbacks, not just deploys. The undo plan is
+captured at write time, because "which deployment was live before" stops being
+knowable the moment you change it.
+
+Policy the tool enforces on itself — "never touch production DNS without a dry run
+first". `--yes` does not satisfy a rule. There is no bypass flag. That's the point:
+an instruction to be careful isn't a control.
+
+`dv watch` — blocks until something changes, so scripts stop hand-rolling sleep loops.
+
+Also in there: GitHub, Vercel, Supabase/Postgres, Gmail, Calendar and LinkedIn, with
+multi-account switching, plus any HTTP API you register yourself.
+
+Zero runtime dependencies. 243 tests. Node 20+.
+
+  npm install -g @abhishekvardanbotta/dv
+
+#devtools #cli #opensource #developerexperience

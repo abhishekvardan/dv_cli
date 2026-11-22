@@ -26,9 +26,23 @@ const SECTIONS: Array<{ title: string; rows: Array<[string, string]> }> = [
   {
     title: 'Workflows',
     rows: [
+      ['dv doctor', 'Check accounts, repo, deploy, env, database'],
       ['dv ship', 'Test, build, push, PR, wait for CI, deploy, verify'],
       ['dv ship --dry-run', 'Show the steps without running them'],
       ['dv ship --skip-tests --no-pr', 'Turn individual steps off'],
+    ],
+  },
+  {
+    title: 'Closing the loop',
+    rows: [
+      ['dv vercel deploy create --verify "<cmd>"', 'Deploy, then check that it works'],
+      ['  ... --on-fail rollback', 'Put the last good build back if it does not'],
+      ['dv journal', 'Every write, newest first'],
+      ['dv undo <id>', 'Revert one of them'],
+      ['dv watch deployments <project>', 'Block until something changes'],
+      ['dv policy show', 'Rules this CLI enforces on itself'],
+      ['dv policy init', 'Write a starting set of them'],
+      ['dv policy test <command>', 'Ask whether a command would be allowed'],
     ],
   },
   {
@@ -44,6 +58,16 @@ const SECTIONS: Array<{ title: string; rows: Array<[string, string]> }> = [
       ['dv auth scopes <provider>', 'What the grant actually permits'],
       ['dv config list', 'OAuth client ids, and the env vars for them'],
       ['dv config set github.clientId <id>', 'Point at your own OAuth app'],
+    ],
+  },
+  {
+    title: 'Git',
+    rows: [
+      ['dv git status', 'Branch, account, changes, unpushed'],
+      ['dv git save -m "..."', 'Stage everything, commit and push'],
+      ['dv git commit -m "..."', 'Stage and commit only'],
+      ['dv git push', 'Push as the active dv account'],
+      ['dv git log', 'Recent commits'],
     ],
   },
   {
@@ -95,12 +119,21 @@ const SECTIONS: Array<{ title: string; rows: Array<[string, string]> }> = [
       ['dv vercel project view <name>', 'One project in detail'],
       ['dv vercel project create <name>', 'New project, optionally --repo owner/name'],
       ['dv vercel deploy list [project]', 'Deployments and their state'],
-      ['dv vercel deploy logs <id>', 'Build output - stderr in red'],
+      ['dv vercel deploy create [dir]', 'Deploy a directory (--prebuilt, --wait)'],
+      ['dv vercel deploy logs <id>', 'Runtime logs (--build, --follow)'],
+      ['dv vercel deploy wait <id>', 'Block until ready, fail if it errors'],
+      ['dv vercel deploy rollback <p>', 'Back to the last healthy production build'],
       ['dv vercel deploy redeploy <project>', 'Redeploy the latest (asks first)'],
       ['dv vercel deploy cancel <id>', 'Stop a running build'],
       ['dv vercel env list <project>', 'Env var keys and targets'],
+      ['dv vercel env diff <p> <file>', 'What is missing or extra, keys only'],
+      ['dv vercel env import <p> <file>', 'Bulk import from a dotenv file'],
+      ['dv vercel env get <p> <key>', 'One value, with --reveal'],
       ['dv vercel env add <project> --key --value', 'Add an env var'],
       ['dv vercel domain list <project>', 'Custom domains'],
+      ['dv vercel dns list <domain>', 'DNS records'],
+      ['dv vercel dns add <d> <type> <n> <v>', 'Add a DNS record'],
+      ['dv vercel domain status <p> <d>', 'Is it actually serving, and what DNS is missing'],
     ],
   },
   {
@@ -112,6 +145,8 @@ const SECTIONS: Array<{ title: string; rows: Array<[string, string]> }> = [
       ['dv db tables', 'Tables, with sizes'],
       ['dv db describe <table>', 'Columns, types, defaults'],
       ['dv db query "select ..."', 'Run SQL (writes ask first)'],
+      ['dv db functions', 'Supabase Edge Functions'],
+      ['dv db function deploy <slug> -f', 'Deploy an Edge Function'],
     ],
   },
   {
@@ -129,6 +164,8 @@ const SECTIONS: Array<{ title: string; rows: Array<[string, string]> }> = [
     title: 'Everything else',
     rows: [
       ['dv status', 'One view of every connection'],
+      ['dv mcp', 'Run as an MCP server (claude mcp add dv -- dv mcp)'],
+      ['dv skill install', 'Teach Claude Code to use dv'],
       ['dv --version', 'Version'],
     ],
   },
@@ -136,6 +173,12 @@ const SECTIONS: Array<{ title: string; rows: Array<[string, string]> }> = [
 
 const FLAGS: Array<[string, string]> = [
   ['--json', 'Machine-readable output on stdout'],
+  ['--fields a,b', 'Keep only these fields'],
+  ['--reveal', 'Do not mask secrets in output'],
+  ['--snapshot <name>', 'Save this result to compare against later'],
+  ['--diff <name>', 'Show what changed since that snapshot'],
+  ['--dry-run', 'Show what a write would do, change nothing'],
+  ['--retries <n>', 'Attempts on transient failures (--no-retry for one)'],
   ['--limit <n>', 'How many results'],
   ['--as <account>', 'Use, or nickname, a specific account'],
   ['--yes, -y', 'Skip confirmations — for scripts'],
@@ -163,5 +206,8 @@ export function printHelp(): void {
   }
   out('');
   out(c.dim('Start with:  dv auth login github     ·  see them all:  dv connect list'));
+  out('');
+  out(c.dim('Naming: dv gh and dv vercel wrap one service each. dv db spans several,'));
+  out(c.dim('chosen with dv db use. dv ship and dv deploy are the cross-service pipeline.'));
   out(c.dim('Tokens live in ~/.dv/credentials.json, readable only by you.'));
 }

@@ -1,0 +1,39 @@
+Watch what a coding agent actually does when you ask it to ship a feature.
+
+It writes the code. Then it stops.
+
+And you open a browser to see whether the push landed. Another tab for the deployment
+logs, to find out why the build failed. Another for the DNS records. Another for the
+database. Another for the spec it was supposed to be following.
+
+Five tabs, and a human in every one of them, because the agent can't see any of it.
+
+That's the real gap. Not reasoning — reach.
+
+An agent can write the code but can't check its own work, so you end up as the eyes for
+the thing that was supposed to save you the trouble. Every tool it has is
+request/response: it does one thing, tells you the request was accepted, and finding out
+whether it actually worked is your problem.
+
+So I built dv. One CLI, one credential store, and enough reach to see and change
+everything the code touches — then close the loop on it.
+
+It deploys, checks that the thing actually works, and puts the last healthy build back
+if it doesn't. Because a build that compiled is not a build that works, and until the
+tool knows the difference, a person has to.
+
+Two things had to come with that before I'd leave it running unattended.
+
+Every write is recorded with how to reverse it, so recovery is one command instead of
+archaeology across three dashboards.
+
+And it enforces your rules on itself. Never touch production DNS without a dry run
+first — that kind of thing. No flag overrides it, including the one that skips
+confirmations. A rule that lives in the agent's context is a suggestion. A rule the tool
+enforces is a control.
+
+The video is one session, start to finish. No dashboards were opened. Not once.
+
+0.9.0, not 1.0 — one path hasn't run end to end yet, and I'd rather say so.
+
+#ai #devtools #agents #developerexperience

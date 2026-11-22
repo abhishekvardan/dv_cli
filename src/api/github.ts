@@ -9,6 +9,7 @@
 
 import { AuthError, NotFoundError, ProviderError } from '../cli/errors.js';
 import { accessToken } from '../auth/tokens.js';
+import { guardDryRun } from '../cli/output.js';
 
 const BASE = 'https://api.github.com';
 
@@ -21,7 +22,32 @@ export interface GhOptions {
   token?: string;
 }
 
+/**
+ * A request that hands back the whole response.
+ *
+ * [request] returns the parsed body, which is right nearly everywhere — but GitHub reports
+ * pagination in the `Link` header, and a commit count is only derivable from it.
+ */
+async function requestRaw(path: string): Promise<Response | null> {
+  guardDryRun('GET', `${BASE}${path}`);
+  const token = await accessToken('github');
+  const res = await fetch(path.startsWith('http') ? path : `${BASE}${path}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'dv-cli',
+    },
+  });
+  // An empty repository answers 409, which is a fact about the repository rather than a
+  // failure — it simply has no commits yet.
+  if (res.status === 404 || res.status === 409) return null;
+  if (!res.ok) return null;
+  return res;
+}
+
 async function request(path: string, options: GhOptions = {}): Promise<any> {
+  guardDryRun(options.method ?? 'GET', `${BASE}${path}`);
   const token = options.token ?? (await accessToken('github'));
   const res = await fetch(path.startsWith('http') ? path : `${BASE}${path}`, {
     method: options.method ?? 'GET',
@@ -255,6 +281,37 @@ export const github = {
 
   async listBranches(fullName: string, limit = 100) {
     return paginate(`/repos/${fullName}/branches`, limit);
+  },
+
+  /**
+   * How many commits a repository has.
+   *
+   * GitHub exposes no commit-count field, and paging the whole history to count would be
+   * thousands of requests for a busy repository. The standard trick instead: ask for one
+   * commit per page, and read the last page number out of the `Link` header — with a page
+   * size of one, the number of pages *is* the number of commits.
+   *
+   * Costs a single request regardless of history length.
+   */
+  async commitCount(fullName: string, branch?: string): Promise<number | null> {
+    // Already owner/name, as everywhere else in this client — the caller resolves it.
+    const query = new URLSearchParams({ per_page: '1' });
+    if (branch) query.set('sha', branch);
+
+    const res = await requestRaw(`/repos/${fullName}/commits?${query}`);
+    if (!res) return null;
+
+    const link = res.headers.get('link');
+    if (link) {
+      // rel="last" is absent when there is only one page, which is the small-repo case
+      // handled below rather than an error.
+      const last = /[?&]page=(\d+)>;\s*rel="last"/.exec(link);
+      if (last?.[1]) return Number(last[1]);
+    }
+
+    // No last link: either one commit, or none at all.
+    const body = (await res.json()) as unknown[];
+    return Array.isArray(body) ? body.length : 0;
   },
 
   async listCommits(fullName: string, opts: { limit?: number; path?: string; sha?: string } = {}) {

@@ -9,6 +9,8 @@
 
 import { AuthError, CliError, EXIT, NotFoundError, ProviderError } from '../cli/errors.js';
 import { accessToken } from '../auth/tokens.js';
+import { explainProviderError, guardDryRun, withRetry } from '../cli/output.js';
+import { warn } from '../cli/ui.js';
 import { getCredential } from '../config/store.js';
 import type { AuthStyle, ProviderDef } from '../auth/providers.js';
 
@@ -84,6 +86,15 @@ export function resolveBase(provider: ProviderDef): string {
  * the same exit codes — 3 to re-authenticate, 4 for a refusal, 5 for missing.
  */
 export async function call(provider: ProviderDef, path: string, options: CallOptions = {}): Promise<any> {
+  // Transient failures are retried here rather than by each caller. A 401/403/404 is a
+  // settled answer and is not retried — doing so wastes rate limit and looks like a hang.
+  return withRetry(() => callOnce(provider, path, options), {
+    onRetry: (attempt, waitMs, reason) =>
+      warn(`${provider.label} ${reason} — retrying in ${Math.round(waitMs / 1000)}s (${attempt})`),
+  });
+}
+
+async function callOnce(provider: ProviderDef, path: string, options: CallOptions = {}): Promise<any> {
   const base = resolveBase(provider);
   const url = new URL(path.startsWith('http') ? path : `${base}${path.startsWith('/') ? '' : '/'}${path}`);
   for (const [k, v] of Object.entries(options.query ?? {})) url.searchParams.set(k, v);
@@ -97,6 +108,8 @@ export async function call(provider: ProviderDef, path: string, options: CallOpt
   if (options.body !== undefined) headers['Content-Type'] ??= 'application/json';
 
   applyAuth(headers, url, provider.authStyle ?? 'bearer', credential);
+
+  guardDryRun(options.method ?? (options.body !== undefined ? 'POST' : 'GET'), url.toString());
 
   const res = await fetch(url, {
     method: options.method ?? (options.body !== undefined ? 'POST' : 'GET'),
@@ -170,15 +183,7 @@ async function describe(res: Response): Promise<string> {
   const text = await res.text().catch(() => '');
   if (!text) return res.statusText;
   try {
-    const body: any = JSON.parse(text);
-    return (
-      body?.message ??
-      body?.error?.message ??
-      body?.error_description ??
-      (typeof body?.error === 'string' ? body.error : undefined) ??
-      body?.errors?.[0]?.message ??
-      res.statusText
-    );
+    return explainProviderError(JSON.parse(text), res.statusText);
   } catch {
     return text.slice(0, 200);
   }

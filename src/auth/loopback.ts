@@ -82,6 +82,15 @@ export interface LoopbackOptions {
    * client type usable: register `http://127.0.0.1:<port>/callback` once.
    */
   port?: number;
+  /**
+   * Ask for these scopes instead of the provider's full set.
+   *
+   * Some scopes are gated behind a product or review the app has not been granted yet,
+   * and the provider refuses the *whole* authorisation when one is unavailable — so a
+   * single ungranted scope blocks reading your own profile. Narrowing the request lets
+   * the login succeed now and the extra scope be added once it is approved.
+   */
+  scopes?: string[];
   /** Called with the URL to visit once the port is known. */
   onUrl: (url: string, redirectUri: string) => void;
 }
@@ -133,7 +142,8 @@ export async function authorizeViaLoopback(
       const error = url.searchParams.get('error_description') || url.searchParams.get('error');
       if (error) {
         respond('Login failed', 'You can close this tab and read the terminal.', false);
-        finish(new AuthError(`${provider.label} refused the login: ${error}`));
+        const message = decodeEntities(error);
+        finish(new AuthError(`${provider.label} refused the login: ${message}`, scopeHint(provider, message)));
         return;
       }
 
@@ -188,7 +198,7 @@ export async function authorizeViaLoopback(
         client_id: clientId,
         redirect_uri: redirectUri,
         response_type: 'code',
-        scope: provider.scopes.join(' '),
+        scope: (options.scopes ?? provider.scopes).join(' '),
         state,
       });
 
@@ -257,4 +267,71 @@ export async function exchangeCode(
     );
   }
   return data;
+}
+
+/**
+ * Undo the HTML escaping providers apply to error text.
+ *
+ * These messages are written for a browser, so a quoted scope name arrives as
+ * `&quot;w_member_social&quot;` and lands in the terminal looking like a bug in this
+ * tool rather than an answer from theirs.
+ */
+export function decodeEntities(text: string): string {
+  const named: Record<string, string> = {
+    quot: '"',
+    apos: "'",
+    amp: '&',
+    lt: '<',
+    gt: '>',
+    nbsp: ' ',
+    '#39': "'",
+    '#x27': "'",
+  };
+  return text.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (whole, name: string) => {
+    const key = name.toLowerCase();
+    if (key in named) return named[key]!;
+    const numeric = /^#x/i.test(name)
+      ? parseInt(name.slice(2), 16)
+      : /^#/.test(name)
+        ? parseInt(name.slice(1), 10)
+        : NaN;
+    return Number.isFinite(numeric) ? String.fromCodePoint(numeric) : whole;
+  });
+}
+
+/**
+ * Turn "scope X is not authorized" into the thing you actually have to go and do.
+ *
+ * An unauthorised scope is never a problem with the login — it means the OAuth app has
+ * not been granted that permission, which is a few clicks in the provider's developer
+ * console. Without this the message is accurate and completely unactionable.
+ */
+export function scopeHint(provider: ProviderDef, message: string): string | undefined {
+  const match = /scope\s+"?([a-z0-9_.:-]+)"?\s+is not authori/i.exec(message);
+  if (!match) return undefined;
+  const scope = match[1]!;
+
+  const productFor: Record<string, string> = {
+    w_member_social: 'Share on LinkedIn',
+    r_liteprofile: 'Sign In with LinkedIn using OpenID Connect',
+    openid: 'Sign In with LinkedIn using OpenID Connect',
+  };
+  const product = productFor[scope];
+
+  const lines = [`Your OAuth app has not been granted "${scope}".`];
+  if (provider.id === 'linkedin') {
+    lines.push(
+      `Open https://www.linkedin.com/developers/apps -> your app -> Products,`,
+      `and request "${product ?? scope}". Approval is usually immediate.`,
+      '',
+      'To sign in without it in the meantime:',
+      `  dv auth login linkedin --scopes "openid profile email"`,
+    );
+  } else {
+    lines.push(
+      `Grant it on the app, or request fewer scopes:`,
+      `  dv auth login ${provider.id} --scopes "<space separated>"`,
+    );
+  }
+  return lines.join('\n');
 }

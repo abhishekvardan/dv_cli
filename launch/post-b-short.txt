@@ -1,0 +1,20 @@
+Shipped dv today — one CLI for GitHub, Vercel, Supabase, Gmail and Calendar.
+
+The feature I actually built it for:
+
+  dv vercel deploy create --dir . \
+    --verify "curl -f {url}/api/health" \
+    --on-fail rollback
+
+It deploys, checks that the thing works, and rolls back to the last healthy build if it
+doesn't. Because a build that compiled is not a build that works, and I was tired of
+being the loop between those two facts.
+
+Every write is journalled and reversible with `dv undo`. Multi-account, so a work
+GitHub and a personal one stop being a problem.
+
+Zero runtime dependencies. 243 tests.
+
+  npm install -g @abhishekvardanbotta/dv
+
+#devtools #cli #developerexperience

@@ -161,7 +161,24 @@ export async function connectCommand(args: ParsedArgs): Promise<void> {
         },
         { header: 'ways to connect', value: (p) => p.methods.join(', '), max: 34 },
         { header: 'auth', value: (p) => c.dim(p.authStyle ?? 'bearer') },
-        { header: '', value: (p) => (p.custom ? c.cyan('custom') : '') },
+        {
+          header: 'next step',
+          // A bare dash tells you nothing. Every unconnected row carries the command
+          // that connects it, and rows needing setup first say which.
+          value: (p) => {
+            if (getCredential(p.id)?.accessToken) return p.custom ? c.cyan('custom') : '';
+            const app = resolveApp(p.id);
+            // Only a problem when *every* way in needs an app. A service that also
+            // accepts a pasted token needs no setup at all, and saying otherwise sends
+            // people to a developer console they never had to visit.
+            const needsApp =
+              !app.clientId &&
+              p.methods.every((m) => m === 'device' || m === 'loopback' || m === 'client_credentials');
+            return needsApp
+              ? c.dim(`dv connect ${p.id}  (register an OAuth app first)`)
+              : c.dim(`dv connect ${p.id}`);
+          },
+        },
       ]);
       info('');
       info(c.dim(`  ${providers.length} connectors`));

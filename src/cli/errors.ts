@@ -67,6 +67,19 @@ export class ProviderError extends CliError {
   }
 }
 
+/**
+ * Raised when `--dry-run` stopped a write before it happened.
+ *
+ * Exits 0: the command did exactly what was asked. Reusing the cancelled code would
+ * make a successful dry run look like a failure to any script wrapping it.
+ */
+export class DryRunError extends CliError {
+  constructor(message = 'Dry run — nothing was changed.') {
+    super(message, EXIT.ok);
+    this.name = 'DryRunError';
+  }
+}
+
 /** Raised when a confirmation was declined, or refused for want of a terminal. */
 export class CancelledError extends CliError {
   constructor(message = 'Cancelled. Nothing was changed.', hint?: string) {

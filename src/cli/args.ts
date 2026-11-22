@@ -17,6 +17,25 @@ export interface ParsedArgs {
 }
 
 /**
+ * The argv this process was given, before parsing.
+ *
+ * `dv policy test db query --file x.sql` has a problem no parsed form can solve: by the
+ * time `policy` sees its arguments, `--file` has been lifted out and the command being
+ * asked about no longer exists as it was typed. Keeping the raw words lets that command
+ * be re-parsed by the same function that parsed the outer one, which is the only way the
+ * test can be asking about the same thing the enforcement path would see.
+ */
+let rawArgvValue: string[] = [];
+
+export function setRawArgv(argv: string[]): void {
+  rawArgvValue = [...argv];
+}
+
+export function rawArgv(): string[] {
+  return rawArgvValue;
+}
+
+/**
  * Parse argv.
  *
  * Supports `--flag`, `--flag=value`, `--flag value`, `--no-flag`, short `-x`, and

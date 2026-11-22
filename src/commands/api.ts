@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs';
 import { UsageError } from '../cli/errors.js';
 import { bool, str, unmanglePath, type ParsedArgs } from '../cli/args.js';
 import { c, info, json, out } from '../cli/ui.js';
+import { pick, redact } from '../cli/output.js';
 import { getProvider, providerIds } from '../auth/providers.js';
 import { call } from '../api/client.js';
 
@@ -31,6 +32,9 @@ export async function apiCommand(args: ParsedArgs): Promise<void> {
     throw new UsageError(`No connector "${providerId}".`, 'dv connect list');
   }
 
+  // Query parameters are safest given as repeated --query pairs rather than inline in
+  // the path: an `&` in an unquoted argument is split by the shell before this process
+  // ever sees it, which silently truncates the request.
   const rawPath = args.command[2] ?? args.positional[0] ?? str(args.flags, 'path');
   const path = rawPath ? unmanglePath(rawPath) : rawPath;
   if (!path) {
@@ -96,7 +100,16 @@ export async function apiCommand(args: ParsedArgs): Promise<void> {
     return;
   }
 
+  // Secrets are masked by default. A raw endpoint can return a token, and printing it
+  // puts a live credential in scrollback and in whatever captured the terminal.
+  // `--reveal` is an explicit, visible decision.
+  const reveal = bool(args.flags, 'reveal');
+  const shaped = str(args.flags, 'fields')
+    ? pick(result, str(args.flags, 'fields')!.split(',').map((f) => f.trim()).filter(Boolean))
+    : result;
+  const safe = reveal ? shaped : redact(shaped);
+
   // `--raw` prints one line, which pipes into jq more cheaply for large responses.
-  if (bool(args.flags, 'raw')) out(JSON.stringify(result));
-  else json(result);
+  if (bool(args.flags, 'raw')) out(JSON.stringify(safe));
+  else json(safe);
 }

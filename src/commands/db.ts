@@ -6,15 +6,20 @@ import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 import { CancelledError, UsageError } from '../cli/errors.js';
-import { bool, num, str, type ParsedArgs } from '../cli/args.js';
+import { bool, negated, num, str, type ParsedArgs } from '../cli/args.js';
 import { describeShape, resolveCommand, type CommandShape } from '../cli/dispatch.js';
-import { c, confirm, info, json, out, select, success, table } from '../cli/ui.js';
+import { c, confirm, info, json, out, select, success, table, warn } from '../cli/ui.js';
+import { emit, outputOpts, wantsJson } from '../cli/output.js';
 import { printResult } from '../cli/resultTable.js';
 import { getOAuthApp, setOAuthApp } from '../config/store.js';
 import '../db/providers.js';
 import {
   SUPABASE_REGIONS,
   supabaseCreateProject,
+  supabaseDeleteFunction,
+  supabaseDeployFunction,
+  supabaseFunction,
+  supabaseFunctions,
   supabaseOrgs,
 } from '../db/providers.js';
 import {
@@ -30,11 +35,12 @@ const SHAPE: CommandShape = {
   verbs: {
     table: ['list', 'describe'],
     project: ['list', 'use', 'create'],
+    function: ['list', 'view', 'deploy', 'rm'],
   },
   // `query` is standalone rather than a noun with verbs: what follows it is free-form
   // SQL, and the noun-verb resolver would read the first word of a statement as a
   // verb — turning `dv db query "select 1"` into an unknown command.
-  standalone: ['query', 'q', 'sql', 'run', 'tables', 'describe', 'count', 'projects', 'use'],
+  standalone: ['query', 'q', 'sql', 'run', 'tables', 'describe', 'count', 'projects', 'use', 'functions'],
 };
 
 /**
@@ -90,9 +96,57 @@ function generatePassword(length = 28): string {
   return out;
 }
 
+/**
+ * Warn that queries here bypass row-level security.
+ *
+ * Shown when the statement touches a table that has RLS enabled — silence on a
+ * `select 1` keeps the warning meaningful rather than background noise. Suppressed by
+ * `--no-rls-warning` for anyone who has understood and made their peace with it.
+ */
+let warnedOwner = false;
+
+/**
+ * Warn that this connection bypasses row-level security.
+ *
+ * Only when the project actually uses RLS. On a database with no policies the warning
+ * is noise, and a warning that fires on every query everywhere is one people learn to
+ * scroll past — which is precisely when it stops protecting anyone.
+ */
+async function warnOwnerConnection(args: ParsedArgs, sql: string): Promise<void> {
+  if (warnedOwner || negated(args.flags, 'rls-warning') || bool(args.flags, 'json')) return;
+  // A read of system catalogues is not the kind of query this is about.
+  if (/pg_catalog|information_schema|pg_tables|pg_class/i.test(sql)) return;
+
+  const usesRls = await runSql(
+    args,
+    "select count(*)::int as n from pg_policies where schemaname = 'public'",
+  )
+    .then((rows) => Number(rows[0]?.n ?? 0) > 0)
+    .catch(() => false);
+  if (!usesRls) return;
+
+  warnedOwner = true;
+  warn('This connection is owner-level — row-level security does not apply to it.');
+  info(c.dim('  This project has RLS policies, so results here are not what a user would see.'));
+  info(c.dim('  Fine for migrations and inspection; test policies as a real signed-in user.'));
+}
+
+/** Edge Functions are Supabase-only; say so rather than failing obscurely. */
+function supabaseRef(args: ParsedArgs): string {
+  const { provider, ref } = currentTarget(args);
+  if (provider !== 'supabase') {
+    throw new UsageError(
+      `Edge Functions are a Supabase feature, and the selected database is ${provider}.`,
+      'dv db use supabase:<ref>',
+    );
+  }
+  return ref;
+}
+
 export async function dbCommand(args: ParsedArgs): Promise<void> {
   const { key, rest } = resolveCommand(args, SHAPE);
-  const asJson = bool(args.flags, 'json');
+  // --snapshot and --diff consume the JSON payload, so they imply it.
+  const asJson = wantsJson(args.flags);
 
   switch (key) {
     case 'projects':
@@ -114,7 +168,7 @@ export async function dbCommand(args: ParsedArgs): Promise<void> {
         rows.push(...found);
       }
 
-      if (asJson) return json(rows);
+      if (asJson) return emit(rows, outputOpts(args.flags, 'db'));
       if (rows.length === 0) {
         return info('No databases found. Connect a provider first, e.g. dv connect supabase');
       }
@@ -267,14 +321,85 @@ export async function dbCommand(args: ParsedArgs): Promise<void> {
       info(c.dim('  Provisioning takes a minute or two.'));
       info(c.dim(`  dv db use supabase:${ref}`));
 
-      if (asJson) json({ ...project, dbPass });
+      if (asJson) emit({ ...project, dbPass }, outputOpts(args.flags, 'db'));
+      return;
+    }
+
+    case 'functions':
+    case 'function list': {
+      const ref = supabaseRef(args);
+      const fns = await supabaseFunctions(ref);
+      if (asJson) return emit(fns, { fields: str(args.flags, 'fields') });
+      if (fns.length === 0) return info('No Edge Functions deployed.');
+      table(fns, [
+        { header: 'slug', value: (f: any) => c.bold(f.slug) },
+        {
+          header: 'status',
+          value: (f: any) => (f.status === 'ACTIVE' ? c.green(f.status) : c.yellow(f.status ?? '—')),
+        },
+        { header: 'version', value: (f: any) => String(f.version ?? '—'), align: 'right' },
+        { header: 'jwt', value: (f: any) => (f.verify_jwt === false ? c.yellow('public') : 'required') },
+      ]);
+      return;
+    }
+
+    case 'function view': {
+      const slug = rest[0];
+      if (!slug) throw new UsageError('Which function?', 'dv db function view hello');
+      const fn = await supabaseFunction(supabaseRef(args), slug);
+      if (!fn) throw new UsageError(`No function "${slug}".`, 'dv db functions');
+      return emit(fn, { fields: str(args.flags, 'fields') });
+    }
+
+    case 'function deploy': {
+      const slug = rest[0] ?? str(args.flags, 'slug');
+      const file = str(args.flags, 'file', 'f') ?? rest[1];
+      if (!slug || !file) {
+        throw new UsageError(
+          'Need a slug and a source file.',
+          'dv db function deploy hello --file ./supabase/functions/hello/index.ts',
+        );
+      }
+      const ref = supabaseRef(args);
+      const body = readFileSync(file, 'utf8');
+
+      // The file is shipped exactly as written, so a relative import resolves to
+      // nothing at runtime. Better to say so now than to have it 500 on first call.
+      const relative = [...body.matchAll(/from\s+['"](\.[^'"]+)['"]/g)].map((m) => m[1]);
+      if (relative.length > 0) {
+        warn(`${file} imports local files: ${relative.join(', ')}`);
+        info(c.dim('  These are not bundled. Inline them, or import by URL.'));
+      }
+
+      const verifyJwt = !bool(args.flags, 'public');
+      out(`${c.dim('function')} ${slug}`);
+      out(`${c.dim('source  ')} ${file}  ${c.dim(`${body.length} bytes`)}`);
+      out(`${c.dim('jwt     ')} ${verifyJwt ? 'required' : c.yellow('public — anyone can call it')}`);
+      out('');
+      const ok = await confirm('Deploy it?', bool(args.flags, 'yes', 'y'));
+      if (!ok) throw new CancelledError('Not deployed.');
+
+      const deployed = await supabaseDeployFunction(ref, { slug, body, verifyJwt });
+      success(`Deployed ${c.bold(slug)} (version ${deployed.version ?? '?'}).`);
+      info(c.dim(`  https://${ref}.supabase.co/functions/v1/${slug}`));
+      return;
+    }
+
+    case 'function rm': {
+      const slug = rest[0];
+      if (!slug) throw new UsageError('Which function?', 'dv db function rm hello');
+      const ref = supabaseRef(args);
+      const ok = await confirm(`Delete function ${c.bold(slug)}?`, bool(args.flags, 'yes', 'y'));
+      if (!ok) throw new CancelledError('Not deleted.');
+      await supabaseDeleteFunction(ref, slug);
+      success(`Deleted ${slug}.`);
       return;
     }
 
     case 'tables':
     case 'table list': {
       const rows = await runSql(args, tablesSql(str(args.flags, 'schema') ?? 'public'));
-      if (asJson) return json(rows);
+      if (asJson) return emit(rows, outputOpts(args.flags, 'db'));
       if (rows.length === 0) return info('No tables in that schema.');
       table(rows, [
         { header: 'table', value: (r: any) => c.bold(r.table), max: 34 },
@@ -296,7 +421,7 @@ export async function dbCommand(args: ParsedArgs): Promise<void> {
       const name = rest[0];
       if (!name) throw new UsageError('Which table?', 'dv db describe tasks');
       const rows = await runSql(args, describeSql(name, str(args.flags, 'schema') ?? 'public'));
-      if (asJson) return json(rows);
+      if (asJson) return emit(rows, outputOpts(args.flags, 'db'));
       if (rows.length === 0) {
         throw new UsageError(`No table "${name}" in that schema.`, 'dv db tables');
       }
@@ -316,7 +441,7 @@ export async function dbCommand(args: ParsedArgs): Promise<void> {
       if (!name) throw new UsageError('Which table?', 'dv db count tasks');
       const counted = await runSql(args, countSql(name, str(args.flags, 'schema') ?? 'public'));
       const n = Number(counted[0]?.n ?? 0);
-      if (asJson) return json({ table: name, rows: n });
+      if (asJson) return emit({ table: name, rows: n }, outputOpts(args.flags, 'db'));
       out(String(n));
       return;
     }
@@ -350,7 +475,14 @@ export async function dbCommand(args: ParsedArgs): Promise<void> {
       }
 
       const rows = await runSql(args, sql);
-      if (asJson) return json(rows);
+
+      // Said out loud, once per session, because it is invisible and dangerous: this
+      // connection is owner-level, so every row-level policy is bypassed. A developer
+      // checking tenant isolation here gets rows a real user could never see and
+      // concludes the policies work.
+      await warnOwnerConnection(args, sql);
+
+      if (asJson) return emit(rows, { fields: str(args.flags, 'fields'), reveal: bool(args.flags, 'reveal') });
 
       if (rows.length === 0) {
         // An empty result from a write is success, not "nothing found".

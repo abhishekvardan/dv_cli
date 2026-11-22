@@ -6,19 +6,21 @@ import { readFileSync } from 'node:fs';
 
 import { UsageError, CancelledError } from '../cli/errors.js';
 import { bool, num, str, type ParsedArgs } from '../cli/args.js';
+import { emit, outputOpts, wantsJson } from '../cli/output.js';
 import { c, confirm, info, json, out, relative, success, table, warn } from '../cli/ui.js';
 import { linkedin } from '../api/linkedin.js';
 import { missingScopes } from '../auth/tokens.js';
 
 export async function linkedinCommand(args: ParsedArgs): Promise<void> {
   const sub = args.command[1] ?? 'me';
-  const asJson = bool(args.flags, 'json');
+  // --snapshot and --diff consume the JSON payload, so they imply it.
+  const asJson = wantsJson(args.flags);
 
   switch (sub) {
     case 'me':
     case 'profile': {
       const me = await linkedin.me();
-      if (asJson) return json(me);
+      if (asJson) return emit(me, outputOpts(args.flags, 'li'));
 
       out(c.bold(me.name ?? '(no name returned)'));
       if (me.email) out(`${c.dim('email  ')} ${me.email}${me.emailVerified ? c.green(' verified') : ''}`);

@@ -1,0 +1,22 @@
+{
+  "name": "dv",
+  "owner": {
+    "name": "Abhishek Vardan Botta"
+  },
+  "metadata": {
+    "description": "dv for Claude Code — GitHub, Vercel, Supabase, git, Gmail, Calendar and LinkedIn as journaled, policy-checked tools."
+  },
+  "plugins": [
+    {
+      "name": "dv",
+      "source": "./plugin",
+      "description": "GitHub, Vercel, Supabase/Postgres, git, Gmail, Calendar and LinkedIn as typed tools, plus the dv skill.",
+      "version": "0.10.0",
+      "author": {
+        "name": "Abhishek Vardan Botta"
+      },
+      "license": "MIT",
+      "category": "development"
+    }
+  ]
+}

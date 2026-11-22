@@ -1,7 +1,7 @@
 {
   "name": "@abhishekvardanbotta/dv",
-  "version": "1.0.0",
-  "description": "One CLI for GitHub, Vercel, Gmail, Calendar and LinkedIn - with OAuth built in and cross-service workflows.",
+  "version": "0.10.0",
+  "description": "One CLI and MCP server for GitHub, Vercel, Supabase, Gmail, Calendar and LinkedIn - with OAuth built in, an undo journal, and cross-service workflows.",
   "type": "module",
   "bin": {
     "dv": "dist/index.js"
@@ -11,7 +11,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "SKILL.md"
   ],
   "engines": {
     "node": ">=20"
@@ -21,7 +22,8 @@
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "sync-plugin": "node scripts/sync-plugin.mjs",
+    "prepublishOnly": "npm run sync-plugin && npm run build"
   },
   "keywords": [
     "cli",
@@ -32,7 +34,11 @@
     "oauth",
     "devops",
     "deploy",
-    "workflow"
+    "workflow",
+    "mcp",
+    "mcp-server",
+    "claude-code",
+    "supabase"
   ],
   "license": "MIT",
   "devDependencies": {
@@ -50,15 +56,11 @@
     }
   },
   "author": "Abhishek Vardan Botta",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/abhishekvardan/dv.git"
-  },
-  "homepage": "https://github.com/abhishekvardan/dv#readme",
-  "bugs": {
-    "url": "https://github.com/abhishekvardan/dv/issues"
-  },
   "publishConfig": {
     "access": "public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
   }
 }

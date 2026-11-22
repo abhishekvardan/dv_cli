@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "dv": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/bin/dv-mcp.mjs"]
+    }
+  }
+}

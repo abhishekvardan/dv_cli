@@ -209,7 +209,7 @@ function shellQuote(arg: string): string {
  * the process happily continued for another 28. On POSIX the child is spawned into
  * its own process group so the whole group can be signalled at once.
  */
-function killTree(pid: number | undefined): void {
+export function killTree(pid: number | undefined): void {
   if (!pid) return;
   if (process.platform === 'win32') {
     spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });

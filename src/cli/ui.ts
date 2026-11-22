@@ -32,6 +32,11 @@ export function setQuiet(value: boolean): void {
   quiet = value;
 }
 
+/** Whether the caller asked for silence. Progress indicators honour this too. */
+export function isQuiet(): boolean {
+  return quiet;
+}
+
 /** Data. The only thing that goes to stdout. */
 export function out(line = ''): void {
   process.stdout.write(`${line}\n`);

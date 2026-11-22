@@ -1,0 +1,513 @@
+<title>dv Terminal Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;700&display=swap">
+
+<style>
+  /*
+    Single-theme by intent: this is a terminal, and a terminal that flips to a light
+    ground stops reading as one. Every colour is painted explicitly so the page holds
+    on whichever ground the viewer's host supplies.
+  */
+  :root {
+    --ground: #0F1117;
+    --window: #161923;
+    --chrome: #1C202B;
+    --edge: #262B38;
+
+    --text: #CDD3DF;
+    --dim: #6E7688;
+    --faint: #464C5C;
+
+    --green: #5FD68A;
+    --red: #FF6B6B;
+    --yellow: #F5C451;
+    --cyan: #5AC8F5;
+    --violet: #C792EA;
+
+    --mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
+    --sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    padding: 28px 20px;
+  }
+
+  /* ── the caption rail ───────────────────────────────────────────
+     Load-bearing, not decoration: most of this will be watched with the
+     sound off, so the caption is the only narration there is. */
+  .stage {
+    width: min(1080px, 100%);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .caption {
+    min-height: 62px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 5px;
+  }
+
+  .caption-kicker {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    opacity: 0;
+    transition: opacity 0.4s ease;
+  }
+
+  .caption-text {
+    font-size: clamp(19px, 2.4vw, 27px);
+    font-weight: 500;
+    line-height: 1.25;
+    letter-spacing: -0.015em;
+    color: var(--text);
+    text-wrap: balance;
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity 0.45s ease, transform 0.45s ease;
+  }
+
+  .caption.on .caption-kicker,
+  .caption.on .caption-text { opacity: 1; transform: none; }
+
+  /* ── terminal window ─────────────────────────────────────────── */
+  .window {
+    background: var(--window);
+    border: 1px solid var(--edge);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.7);
+  }
+
+  .titlebar {
+    background: var(--chrome);
+    border-bottom: 1px solid var(--edge);
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .dot { width: 11px; height: 11px; border-radius: 50%; flex: none; }
+  .dot.r { background: #E8595A; }
+  .dot.y { background: #E3B341; }
+  .dot.g { background: #3FB950; }
+
+  .titlebar-name {
+    margin-left: 8px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--dim);
+  }
+
+  .screen {
+    font-family: var(--mono);
+    font-size: 13.5px;
+    line-height: 1.62;
+    padding: 16px 18px 22px;
+    height: 460px;
+    overflow-y: auto;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--edge) transparent;
+  }
+  .screen::-webkit-scrollbar { width: 8px; height: 8px; }
+  .screen::-webkit-scrollbar-thumb { background: var(--edge); border-radius: 4px; }
+
+  .line { white-space: pre; }
+  .line.wrapped { white-space: pre-wrap; }
+
+  .prompt-path { color: var(--violet); }
+  .prompt-sym { color: var(--cyan); }
+  .cmd { color: var(--text); font-weight: 700; }
+
+  .ok { color: var(--green); }
+  .bad { color: var(--red); }
+  .warn { color: var(--yellow); }
+  .dim { color: var(--dim); }
+  .faint { color: var(--faint); }
+  .hi { color: var(--cyan); }
+
+  .caret {
+    display: inline-block;
+    width: 8px;
+    height: 1.05em;
+    background: var(--cyan);
+    vertical-align: text-bottom;
+    animation: blink 1.05s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ── controls ────────────────────────────────────────────────── */
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  button {
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    background: var(--chrome);
+    border: 1px solid var(--edge);
+    border-radius: 7px;
+    padding: 8px 15px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+  button:hover { background: #232836; border-color: #333A4A; }
+  button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+  button.primary { background: var(--cyan); border-color: var(--cyan); color: #0B1620; font-weight: 600; }
+  button.primary:hover { background: #6FD2F7; border-color: #6FD2F7; }
+
+  .hint {
+    font-size: 12.5px;
+    color: var(--dim);
+    margin-left: 2px;
+  }
+  .hint kbd {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    background: var(--chrome);
+    border: 1px solid var(--edge);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+
+  /* Recording mode: everything that is not the demo gets out of the way. */
+  body.recording .controls,
+  body.recording .credit { display: none; }
+  body.recording { justify-content: center; }
+
+  .credit {
+    font-size: 12px;
+    color: var(--faint);
+    font-family: var(--mono);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .caret { animation: none; }
+    .caption-kicker, .caption-text { transition: none; }
+  }
+
+  @media (max-width: 620px) {
+    .screen { height: 380px; font-size: 11.5px; padding: 13px 12px 18px; }
+  }
+</style>
+
+<div class="stage">
+  <div class="caption" id="caption">
+    <div class="caption-kicker" id="kicker"></div>
+    <div class="caption-text" id="captionText"></div>
+  </div>
+
+  <div class="window">
+    <div class="titlebar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span class="titlebar-name">~/orbit</span>
+    </div>
+    <div class="screen" id="screen"></div>
+  </div>
+</div>
+
+<div class="controls">
+  <button class="primary" id="play">Replay</button>
+  <button id="speed">Speed 1&times;</button>
+  <button id="record">Recording mode</button>
+  <span class="hint"><kbd>R</kbd> replay &middot; <kbd>H</kbd> hide controls</span>
+</div>
+
+<div class="credit">npm install -g @abhishekvardanbotta/dv</div>
+
+<script>
+(() => {
+  const screen = document.getElementById('screen');
+  const caption = document.getElementById('caption');
+  const kicker = document.getElementById('kicker');
+  const captionText = document.getElementById('captionText');
+
+  const PROMPT = '<span class="prompt-path">~/orbit</span> <span class="prompt-sym">$</span> ';
+
+  /*
+    The script — one continuous session, from empty credentials to a published post.
+
+    Formats are taken from real runs: the doctor summary, the journal, the verify
+    retries and the LinkedIn confirmation all print exactly like this. The values are
+    a composite, since no single real session contains the whole arc.
+  */
+  const SCRIPT = [
+    { caption: ['The problem', 'Your agent writes the code. Then opens five tabs to find out if it worked.'], wait: 2400 },
+
+    /* ── 1. connect ─────────────────────────────────────────── */
+    { caption: ['Connect once', 'Every service, one credential store. Tokens are never echoed back.'] },
+    { cmd: 'dv auth token github --token ghp_••••••••••••' },
+    { out: [['ok', '✓ github    connected as abhishekvardanbotta']], pace: 40, wait: 200 },
+    { cmd: 'dv auth token vercel --token ••••••••••••' },
+    { out: [['ok', '✓ vercel    connected as abhiuma2005-9689']], pace: 40, wait: 200 },
+    { cmd: 'dv auth token supabase --token sbp_••••••••••••' },
+    { out: [['ok', '✓ supabase  connected']], pace: 40, wait: 200 },
+    { cmd: 'dv auth login google' },
+    { out: [
+      ['dim', '  Opening your browser… listening on 127.0.0.1:51847'],
+      ['ok', '✓ google    connected as you@gmail.com  (gmail, calendar)']
+    ], pace: 420, wait: 1400 },
+
+    /* ── 2. what is broken ──────────────────────────────────── */
+    { caption: ['What is actually broken?', 'One pass across accounts, repo, deploy, env and database.'] },
+    { cmd: 'dv doctor' },
+    { out: [
+      ['', ''],
+      ['ok', '  ok  accounts    4 connected'],
+      ['ok', '  ok  repository  clean, main at 25f83ac'],
+      ['bad', '  !!  env         DATABASE_URL in source, missing on Vercel'],
+      ['ok', '  ok  database    RLS enabled on all 19 tables'],
+      ['', ''],
+      ['warn', '1 problem found.']
+    ], pace: 40, wait: 1700 },
+
+    /* ── 3. the database ────────────────────────────────────── */
+    { caption: ['No dashboard', 'Query the database from here. Supabase never opens.'] },
+    { cmd: 'dv db query "select count(*) from users"' },
+    { out: [
+      ['dim', '  count'],
+      ['', '  1,284'],
+      ['ok', '✓ 1 row · 240ms']
+    ], pace: 46, wait: 1400 },
+
+    /* ── 4. push ────────────────────────────────────────────── */
+    { caption: ['Push as the right account', 'Plain git ignores which account you switched to. This does not.'] },
+    { cmd: 'dv git save -m "feat: email notifications" --yes' },
+    { out: [
+      ['dim', '  staged 7 files'],
+      ['ok', '✓ Committed 4f1c9de'],
+      ['ok', '✓ Pushed to origin/main as abhishekvardanbotta']
+    ], pace: 300, wait: 1500 },
+
+    /* ── 5. deploy, and check it ────────────────────────────── */
+    { caption: ['Ship it', 'Deploy — then check that the thing actually works.'] },
+    { cmd: 'dv vercel deploy create --dir . --yes --wait \\\n    --verify "curl -f {url}/api/health" --on-fail rollback' },
+    { out: [
+      ['ok', '✓ Uploaded 412 files (2.1 MB).'],
+      ['warn', '  BUILDING   31s']
+    ], pace: 560, wait: 300 },
+    { out: [
+      ['ok', '  READY      48s'],
+      ['ok', '✓ Ready — https://orbit-9fk2.vercel.app']
+    ], pace: 400, wait: 700 },
+
+    { caption: ['A build that compiled is not a build that works', 'So it checks.'] },
+    { out: [
+      ['warn', '  verify  attempt 1/3 failed (exit 22), retrying in 3s…'],
+      ['warn', '  verify  attempt 2/3 failed (exit 22), retrying in 3s…']
+    ], pace: 620, wait: 300 },
+    { out: [
+      ['', ''],
+      ['bad', '  Verification failed.'],
+      ['dim', '  result  exit 22  180ms'],
+      ['faint', '  │ FUNCTION_INVOCATION_FAILED'],
+      ['', '']
+    ], pace: 60, wait: 1100 },
+
+    { caption: ['And puts the last good build back', 'Without being asked twice.'] },
+    { out: [
+      ['warn', '! Rolling back to the last healthy production deployment…'],
+      ['ok', '✓ Rolled back to https://orbit-7ba1.vercel.app'],
+      ['bad', '✗ Deployment failed verification and was rolled back.  exit 4']
+    ], pace: 460, wait: 1800 },
+
+    /* ── 6. why did it fail ─────────────────────────────────── */
+    { caption: ['Why did it fail?', 'The build log, without the Vercel dashboard.'] },
+    { cmd: 'dv vercel deploy logs orbit-9fk2 --build' },
+    { out: [
+      ['dim', '  12:04:31  Running "npm run build"'],
+      ['dim', '  12:04:58  ✓ built in 24.1s'],
+      ['bad', '  12:05:02  Error: DATABASE_URL is not defined'],
+      ['bad', '  12:05:02    at getPool (api/health.ts:8:11)']
+    ], pace: 300, wait: 1900 },
+
+    /* ── 7. fix it ──────────────────────────────────────────── */
+    { caption: ['Fix it in place', 'And note what comes back with it.'] },
+    { cmd: 'dv vercel env add orbit --key DATABASE_URL --value postgres://•••• --yes' },
+    { out: [
+      ['ok', '✓ Added DATABASE_URL to orbit (production, preview, development).'],
+      ['dim', '  dv undo j_mt4q8xp2f091']
+    ], pace: 60, wait: 1500 },
+
+    /* ── 8. and again ───────────────────────────────────────── */
+    { caption: ['Ship it again', 'Same command. This time the check passes.'] },
+    { cmd: 'dv vercel deploy create --dir . --yes --wait \\\n    --verify "curl -f {url}/api/health" --on-fail rollback' },
+    { out: [
+      ['ok', '✓ Uploaded 412 files (2.1 MB).'],
+      ['warn', '  BUILDING   29s'],
+      ['ok', '  READY      44s']
+    ], pace: 520, wait: 300 },
+    { out: [
+      ['ok', '  verify  curl -f https://orbit-2c8d.vercel.app/api/health  (214ms)'],
+      ['ok', '✓ Verified.']
+    ], pace: 460, wait: 1900 },
+
+    /* ── 9. the record ──────────────────────────────────────── */
+    { caption: ['Every write, reversible', 'Recovery is one command, not archaeology across three dashboards.'] },
+    { cmd: 'dv journal' },
+    { out: [
+      ['hi', 'j_mt4q9wkb3d17  undoable  just now'],
+      ['', '  Rolled orbit back to orbit-7ba1'],
+      ['hi', 'j_mt4q8xp2f091  undoable  2m ago'],
+      ['', '  Added DATABASE_URL to orbit'],
+      ['', ''],
+      ['dim', '2 of these can be reverted — dv undo <id>']
+    ], pace: 34, wait: 1900 },
+
+    /* ── 10. mail ───────────────────────────────────────────── */
+    { caption: ['Same terminal, still', 'The alerts that fired while all that happened.'] },
+    { cmd: 'dv gmail list --from vercel --limit 2' },
+    { out: [
+      ['dim', '  12:05  Vercel   Deployment failed — orbit'],
+      ['dim', '  12:11  Vercel   Deployment ready — orbit']
+    ], pace: 300, wait: 1700 },
+
+    /* ── 11. tell people ────────────────────────────────────── */
+    { caption: ['And one more thing', 'The post announcing this was posted by this.'] },
+    { cmd: 'dv li post --file launch.txt' },
+    { out: [
+      ['', ''],
+      ['', 'This will be posted to LinkedIn as you:'],
+      ['dim', '  Your agent writes the code. Then opens five tabs to'],
+      ['dim', '  find out if it worked. That is the real gap — not'],
+      ['dim', '  reasoning, reach…'],
+      ['', ''],
+      ['dim', '  visibility  anyone'],
+      ['', 'Post it? [y/N] y']
+    ], pace: 44, wait: 700 },
+    { out: [['ok', '✓ Posted.']], pace: 40, wait: 2200 },
+
+    { caption: ['No dashboards were opened.', 'Not once.'], wait: 3000 },
+
+    { out: [
+      ['', ''],
+      ['hi', '  npm install -g @abhishekvardanbotta/dv'],
+      ['dim', '  dv skill install     teach your coding assistant to drive it'],
+      ['', '']
+    ], pace: 44, wait: 400 }
+  ];
+
+  let speed = 1;
+  let runToken = 0;
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, reduced ? 0 : ms / speed));
+
+  function addLine(html, cls) {
+    const el = document.createElement('div');
+    el.className = 'line' + (cls ? ' ' + cls : '');
+    el.innerHTML = html;
+    screen.appendChild(el);
+    screen.scrollTop = screen.scrollHeight;
+    return el;
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  /** Type a command a character at a time, with the caret riding the end. */
+  async function typeCommand(text, token) {
+    // A multi-line command is typed as one block; the newline is honoured by pre.
+    const el = addLine(PROMPT + '<span class="cmd"></span><span class="caret"></span>');
+    el.classList.add('wrapped');
+    const target = el.querySelector('.cmd');
+    const caret = el.querySelector('.caret');
+
+    for (let i = 0; i < text.length; i++) {
+      if (token !== runToken) return;
+      target.textContent += text[i];
+      screen.scrollTop = screen.scrollHeight;
+      // Slightly irregular, because a perfectly even cadence reads as a progress bar
+      // rather than as typing.
+      await sleep(text[i] === '\n' ? 90 : 16 + Math.random() * 26);
+    }
+    if (token !== runToken) return;
+    caret.remove();
+    await sleep(260);
+  }
+
+  async function showCaption([kick, text], token) {
+    caption.classList.remove('on');
+    await sleep(220);
+    if (token !== runToken) return;
+    kicker.textContent = kick;
+    captionText.textContent = text;
+    caption.classList.add('on');
+    await sleep(420);
+  }
+
+  async function run() {
+    const token = ++runToken;
+    screen.innerHTML = '';
+    caption.classList.remove('on');
+    await sleep(500);
+
+    for (const step of SCRIPT) {
+      if (token !== runToken) return;
+
+      if (step.caption) await showCaption(step.caption, token);
+
+      if (step.cmd) await typeCommand(step.cmd, token);
+
+      if (step.out) {
+        for (const [cls, text] of step.out) {
+          if (token !== runToken) return;
+          addLine(escapeHtml(text) || '&nbsp;', cls);
+          await sleep(step.pace ?? 40);
+        }
+      }
+
+      if (step.wait) await sleep(step.wait);
+    }
+
+    if (token !== runToken) return;
+    addLine(PROMPT + '<span class="caret"></span>');
+  }
+
+  document.getElementById('play').addEventListener('click', run);
+
+  document.getElementById('speed').addEventListener('click', (e) => {
+    speed = speed === 1 ? 1.5 : speed === 1.5 ? 2 : speed === 2 ? 0.75 : 1;
+    e.currentTarget.textContent = 'Speed ' + speed + '×';
+  });
+
+  const recordBtn = document.getElementById('record');
+  recordBtn.addEventListener('click', () => {
+    document.body.classList.toggle('recording');
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'BUTTON') return;
+    if (e.key === 'r' || e.key === 'R') run();
+    if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('recording');
+  });
+
+  run();
+})();
+</script>

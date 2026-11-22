@@ -7,6 +7,7 @@ import { writeFileSync } from 'node:fs';
 
 import { CliError, NotFoundError, UsageError, CancelledError } from '../cli/errors.js';
 import { bool, num, str, type ParsedArgs } from '../cli/args.js';
+import { emit, outputOpts, wantsJson } from '../cli/output.js';
 import { describeShape, resolveCommand, type CommandShape } from '../cli/dispatch.js';
 import { c, confirm, info, json, out, relative, success, table, warn } from '../cli/ui.js';
 import { github } from '../api/github.js';
@@ -38,7 +39,7 @@ function stateColor(state: string): string {
 
 const SHAPE: CommandShape = {
   verbs: {
-    repo: ['list', 'view', 'create', 'edit', 'delete', 'clone'],
+    repo: ['list', 'view', 'stats', 'create', 'edit', 'delete', 'clone'],
     issue: ['list', 'create', 'close', 'comment'],
     pr: ['list', 'create'],
     branch: ['list', 'create'],
@@ -72,11 +73,80 @@ const SHAPE: CommandShape = {
 
 export async function ghCommand(args: ParsedArgs): Promise<void> {
   const { key: sub, rest } = resolveCommand(args, SHAPE);
-  const asJson = bool(args.flags, 'json');
+  // --snapshot and --diff consume the JSON payload, so they imply it.
+  const asJson = wantsJson(args.flags);
   const arg1 = rest[0];
 
   switch (sub) {
     /* ─────────── read ─────────── */
+
+    case 'repo stats': {
+      // Answers a question that no single API call does: "which repository has the most
+      // commits". The alternative was leaving it to a language model to list repositories,
+      // count each one, and compare — three steps a small model reliably loses its way in.
+      // Doing it here makes the answer correct rather than merely likely.
+      const limit = num(args.flags, 'limit', 20);
+      const repos = await github.listRepos({ limit });
+
+      if (repos.length === 0) return info('No repositories.');
+
+      // Only when someone is watching. Captured runs keep it out of the output, where a
+      // line saying "counting…" is stale by the time anything reads it.
+      if (process.stderr.isTTY) {
+        info(c.dim(`  counting commits across ${repos.length} repositories…`));
+      }
+
+      // Concurrent, because each count is one request and doing them in series makes
+      // twenty repositories feel broken. Capped so a large account does not open fifty
+      // sockets at once and trip the rate limiter.
+      const rows: Array<{ repo: string; commits: number | null; pushed?: string; private: boolean }> = [];
+      const queue = [...repos];
+
+      const worker = async () => {
+        for (;;) {
+          const repo = queue.shift();
+          if (!repo) return;
+          let commits: number | null = null;
+          try {
+            commits = await github.commitCount(repo.full_name);
+          } catch {
+            // One unreadable repository must not sink the whole ranking — it is reported
+            // as unknown and the rest still answer the question.
+            commits = null;
+          }
+          rows.push({
+            repo: repo.full_name,
+            commits,
+            pushed: repo.pushed_at,
+            private: repo.private === true,
+          });
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(6, repos.length) }, worker));
+
+      // Most commits first, which is the whole point. Unknown counts sink rather than
+      // sorting as zero, so a repository we could not read is not reported as empty.
+      rows.sort((a, b) => (b.commits ?? -1) - (a.commits ?? -1));
+
+      if (asJson) return emit(rows, outputOpts(args.flags, 'gh'));
+
+      table(rows, [
+        { header: 'repo', value: (r: any) => r.repo },
+        {
+          header: 'commits',
+          value: (r: any) => (r.commits === null ? c.dim('unknown') : String(r.commits)),
+        },
+        { header: 'vis', value: (r: any) => (r.private ? c.dim('private') : 'public') },
+        { header: 'pushed', value: (r: any) => c.dim(relative(r.pushed)) },
+      ]);
+
+      const top = rows[0];
+      if (top && top.commits !== null) {
+        out('');
+        success(`${top.repo} has the most commits (${top.commits}).`);
+      }
+      return;
+    }
 
     case 'repo list': {
       const repos = await github.listRepos({
@@ -90,7 +160,7 @@ export async function ghCommand(args: ParsedArgs): Promise<void> {
           ? repos.filter((r) => r.private)
           : repos;
 
-      if (asJson) return json(filtered);
+      if (asJson) return emit(filtered, outputOpts(args.flags, 'gh'));
       if (filtered.length === 0) return info('No repositories matched.');
 
       table(filtered, [
@@ -107,7 +177,7 @@ export async function ghCommand(args: ParsedArgs): Promise<void> {
     case 'repo view': {
       const full = await resolveRepo(arg1, args.flags);
       const repo = await github.getRepo(full);
-      if (asJson) return json(repo);
+      if (asJson) return emit(repo, outputOpts(args.flags, 'gh'));
       out(c.bold(repo.full_name));
       if (repo.description) out(repo.description);
       out('');
@@ -124,7 +194,7 @@ export async function ghCommand(args: ParsedArgs): Promise<void> {
     case 'branch list': {
       const full = await resolveRepo(arg1, args.flags);
       const [repo, branches] = await Promise.all([github.getRepo(full), github.listBranches(full)]);
-      if (asJson) return json(branches);
+      if (asJson) return emit(branches, outputOpts(args.flags, 'gh'));
       table(branches, [
         { header: 'branch', value: (b: any) => (b.name === repo.default_branch ? c.bold(b.name) : b.name) },
         { header: '', value: (b: any) => (b.name === repo.default_branch ? c.dim('default') : '') },
@@ -141,7 +211,7 @@ export async function ghCommand(args: ParsedArgs): Promise<void> {
         path: str(args.flags, 'path'),
         sha: str(args.flags, 'branch', 'ref'),
       });
-      if (asJson) return json(commits);
+      if (asJson) return emit(commits, outputOpts(args.flags, 'gh'));
       table(commits, [
         { header: 'sha', value: (x: any) => c.dim(String(x.sha).slice(0, 8)) },
         { header: 'message', value: (x: any) => String(x.commit?.message ?? '').split('\n')[0] ?? '', max: 62 },
@@ -158,7 +228,7 @@ export async function ghCommand(args: ParsedArgs): Promise<void> {
         limit: num(args.flags, 'limit', 30),
         labels: str(args.flags, 'label'),
       });
-      if (asJson) return json(issues);
+      if (asJson) return emit(issues, outputOpts(args.flags, 'gh'));
       if (issues.length === 0) return info('No issues matched.');
       table(issues, [
         { header: '#', value: (i: any) => String(i.number), align: 'right' },
@@ -176,7 +246,7 @@ export async function ghCommand(args: ParsedArgs): Promise<void> {
         state: str(args.flags, 'state') ?? 'open',
         limit: num(args.flags, 'limit', 30),
       });
-      if (asJson) return json(prs);
+      if (asJson) return emit(prs, outputOpts(args.flags, 'gh'));
       if (prs.length === 0) return info('No pull requests matched.');
       table(prs, [
         { header: '#', value: (p: any) => String(p.number), align: 'right' },
@@ -195,7 +265,7 @@ export async function ghCommand(args: ParsedArgs): Promise<void> {
       const full = await resolveRepo(arg1, args.flags);
       const path = rest[1] ?? str(args.flags, 'path') ?? '';
       const entries = await github.browse(full, path, str(args.flags, 'ref'));
-      if (asJson) return json(entries);
+      if (asJson) return emit(entries, outputOpts(args.flags, 'gh'));
       if (!Array.isArray(entries)) {
         throw new UsageError(`${path} is a file.`, `dv gh file read ${full} ${path}`);
       }
@@ -221,7 +291,7 @@ export async function ghCommand(args: ParsedArgs): Promise<void> {
         success(`Wrote ${file.text.length} bytes to ${outFile}`);
         return;
       }
-      if (asJson) return json(file);
+      if (asJson) return emit(file, outputOpts(args.flags, 'gh'));
       // Raw contents, unstyled — this is meant to be piped.
       process.stdout.write(file.text.endsWith('\n') ? file.text : `${file.text}\n`);
       return;
@@ -237,7 +307,7 @@ export async function ghCommand(args: ParsedArgs): Promise<void> {
         user: scope ? undefined : (await github.whoami()).login,
         limit: num(args.flags, 'limit', 20),
       });
-      if (asJson) return json(result);
+      if (asJson) return emit(result, outputOpts(args.flags, 'gh'));
       info(c.dim(`  ${result.total} match${result.total === 1 ? '' : 'es'}`));
       table(result.items, [
         { header: 'repo', value: (i: any) => i.repository?.full_name ?? '—', max: 34 },
@@ -249,7 +319,7 @@ export async function ghCommand(args: ParsedArgs): Promise<void> {
     case 'activity': {
       const login = str(args.flags, 'user') ?? (await github.whoami()).login;
       const events = await github.activity(login, num(args.flags, 'limit', 25));
-      if (asJson) return json(events);
+      if (asJson) return emit(events, outputOpts(args.flags, 'gh'));
       table(events, [
         { header: 'when', value: (e: any) => relative(e.created_at) },
         { header: 'event', value: (e: any) => String(e.type ?? '').replace(/Event$/, '') },
@@ -272,7 +342,7 @@ export async function ghCommand(args: ParsedArgs): Promise<void> {
         limit: num(args.flags, 'limit', 15),
         workflow: str(args.flags, 'workflow', 'w'),
       });
-      if (asJson) return json(runs);
+      if (asJson) return emit(runs, outputOpts(args.flags, 'gh'));
       if (runs.length === 0) return info('No workflow runs found.');
       table(runs, [
         { header: 'run', value: (r: any) => `#${r.run_number}`, align: 'right' },
@@ -290,7 +360,7 @@ export async function ghCommand(args: ParsedArgs): Promise<void> {
     case 'workflow list': {
       const full = await resolveRepo(arg1, args.flags);
       const workflows = await github.listWorkflows(full);
-      if (asJson) return json(workflows);
+      if (asJson) return emit(workflows, outputOpts(args.flags, 'gh'));
       table(workflows, [
         { header: 'name', value: (w: any) => w.name, max: 36 },
         { header: 'file', value: (w: any) => String(w.path ?? '').replace('.github/workflows/', '') },
@@ -331,7 +401,7 @@ export async function ghCommand(args: ParsedArgs): Promise<void> {
         homepage: str(args.flags, 'homepage'),
       });
 
-      if (asJson) return json(repo);
+      if (asJson) return emit(repo, outputOpts(args.flags, 'gh'));
       success(`Created ${c.bold(repo.full_name)} (${repo.private ? 'private' : 'public'})`);
       out(repo.html_url);
 
@@ -419,7 +489,7 @@ export async function ghCommand(args: ParsedArgs): Promise<void> {
       }
 
       const updated = await github.updateRepo(full, patch);
-      if (asJson) return json(updated);
+      if (asJson) return emit(updated, outputOpts(args.flags, 'gh'));
 
       success(`Updated ${c.bold(updated.full_name)}`);
       for (const [field, value] of Object.entries(patch)) {
@@ -466,7 +536,7 @@ export async function ghCommand(args: ParsedArgs): Promise<void> {
         body: str(args.flags, 'body', 'b'),
         labels: labels === undefined ? undefined : Array.isArray(labels) ? labels : [String(labels)],
       });
-      if (asJson) return json(issue);
+      if (asJson) return emit(issue, outputOpts(args.flags, 'gh'));
       success(`Opened #${issue.number}: ${issue.title}`);
       out(issue.html_url);
       return;
@@ -512,7 +582,7 @@ export async function ghCommand(args: ParsedArgs): Promise<void> {
         body: str(args.flags, 'body', 'b'),
         draft: bool(args.flags, 'draft'),
       });
-      if (asJson) return json(pr);
+      if (asJson) return emit(pr, outputOpts(args.flags, 'gh'));
       success(`Opened #${pr.number}: ${pr.title} (${head} → ${base})`);
       out(pr.html_url);
       return;

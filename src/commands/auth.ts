@@ -430,8 +430,18 @@ async function loginLoopback(providerId: string, args: ParsedArgs): Promise<void
     info(`  ${c.bold(`http://127.0.0.1:${pinnedPort}/callback`)}`);
   }
 
+  // A narrowed scope set, for when one scope is gated behind an unapproved product.
+  const scopeOverride = str(args.flags, 'scopes', 'scope')
+    ?.split(/[\s,]+/)
+    .filter(Boolean);
+  if (scopeOverride?.length) {
+    info('');
+    info(`  ${c.dim(`Requesting only: ${scopeOverride.join(' ')}`)}`);
+  }
+
   const result = await authorizeViaLoopback(provider, app.clientId, {
     port: pinnedPort,
+    scopes: scopeOverride?.length ? scopeOverride : undefined,
     onUrl: (url, redirectUri) => {
       const opened = openBrowser(url);
       info('');
