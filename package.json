@@ -1,6 +1,6 @@
 {
   "name": "@abhishekvardanbotta/dv",
-  "version": "0.10.0",
+  "version": "0.10.2",
   "description": "One CLI and MCP server for GitHub, Vercel, Supabase, Gmail, Calendar and LinkedIn - with OAuth built in, an undo journal, and cross-service workflows.",
   "type": "module",
   "bin": {

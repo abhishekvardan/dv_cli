@@ -11,7 +11,7 @@
       "name": "dv",
       "source": "./plugin",
       "description": "GitHub, Vercel, Supabase/Postgres, git, Gmail, Calendar and LinkedIn as typed tools, plus the dv skill.",
-      "version": "0.10.0",
+      "version": "0.10.2",
       "author": {
         "name": "Abhishek Vardan Botta"
       },

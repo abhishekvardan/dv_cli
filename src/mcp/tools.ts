@@ -41,6 +41,37 @@ const via = 'via dv (your own OAuth login, journaled, policy-checked)';
  * flag the handler does not read is silently ignored, which would look like success.
  */
 export const MCP_EXTRA: McpCommand[] = [
+  // ── accounts ──────────────────────────────────────────────────────────────
+  // Adding one is the auth_add tool in commands/mcp.ts: it must not take a token here.
+  {
+    id: 'auth accounts',
+    purpose: 'Every saved account per service (GitHub, Vercel, Google, …) and which one is active. Any tool can act as another account via its account input.',
+    params: [{ positional: true, name: 'provider', describe: 'only this service, e.g. github' }],
+  },
+  {
+    id: 'auth switch',
+    purpose: 'Change which saved account a service uses by default.',
+    params: [
+      { positional: true, name: 'provider', describe: 'the service, e.g. github', required: true },
+      { positional: true, name: 'name', describe: 'the account name, as auth accounts lists it', required: true },
+    ],
+    mutates: true,
+    effect: 'change the default account',
+    json: false,
+  },
+  {
+    id: 'auth logout',
+    purpose: 'Remove one saved account from dv (it stays valid at the provider).',
+    params: [
+      { positional: true, name: 'provider', describe: 'the service, e.g. github', required: true },
+      { name: 'as', describe: 'the account to remove, as auth accounts lists it', required: true },
+    ],
+    mutates: true,
+    danger: 'high',
+    effect: 'remove a saved account from dv',
+    json: false,
+  },
+
   // ── gmail ─────────────────────────────────────────────────────────────────
   {
     id: 'gmail search',

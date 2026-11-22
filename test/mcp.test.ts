@@ -110,6 +110,16 @@ describe.runIf(existsSync(entry))('dv mcp over stdio', () => {
     expect(resources.map((r) => r.uri)).toContain('dv://skill');
   });
 
+  it('never runs a write without confirm, even one whose command does not ask', async () => {
+    const result = (await client.callTool({
+      name: 'gh_issue_create',
+      arguments: { repo: 'nobody/nothing', title: 'must not be created' },
+    })) as { content: Array<{ text: string }>; isError?: boolean };
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('PREVIEW — not run');
+    expect(result.content[0]!.text).toContain('exit 6');
+  }, 30_000);
+
   it('runs a command and returns its output', async () => {
     const result = (await client.callTool({ name: 'help', arguments: {} })) as { content: Array<{ text: string }>; isError?: boolean };
     expect(result.isError).toBe(false);

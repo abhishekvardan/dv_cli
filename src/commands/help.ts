@@ -164,7 +164,8 @@ const SECTIONS: Array<{ title: string; rows: Array<[string, string]> }> = [
     title: 'Everything else',
     rows: [
       ['dv status', 'One view of every connection'],
-      ['dv mcp', 'Run as an MCP server (claude mcp add dv -- dv mcp)'],
+      ['dv mcp install', 'Connect dv to Claude Code, Claude Desktop, Cursor'],
+      ['dv mcp status', 'Which apps dv is connected to'],
       ['dv skill install', 'Teach Claude Code to use dv'],
       ['dv --version', 'Version'],
     ],
@@ -206,6 +207,7 @@ export function printHelp(): void {
   }
   out('');
   out(c.dim('Start with:  dv auth login github     ·  see them all:  dv connect list'));
+  out(c.dim('Use it from Claude Code, Claude Desktop or Cursor:  dv mcp install'));
   out('');
   out(c.dim('Naming: dv gh and dv vercel wrap one service each. dv db spans several,'));
   out(c.dim('chosen with dv db use. dv ship and dv deploy are the cross-service pipeline.'));

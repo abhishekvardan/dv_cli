@@ -12,26 +12,35 @@ Node 20+. Built by **Abhishek Vardan Botta**.
 
 ---
 
-## Use with Claude Code (MCP server + plugin)
+## Use it from Claude Code, Claude Desktop or Cursor
 
-`dv mcp` runs dv as an MCP server, so Claude Code calls dv's commands as typed tools
-(`gh_pr_list`, `vercel_deploy_redeploy`, `gmail_send`, …) instead of composing shell
-lines. Reads are marked read-only and writes destructive, so you can auto-approve every
-read and still be asked about each write.
-
-**As a plugin** (installs the MCP server and the skill together):
-
-```text
-/plugin marketplace add <path-or-git-url-of-this-repo>
-/plugin install dv@dv
-```
-
-**Or just the MCP server:**
+Two commands. No config files to edit:
 
 ```bash
 npm install -g @abhishekvardanbotta/dv
-claude mcp add dv -- dv mcp                # macOS / Linux
-claude mcp add dv -- cmd /c dv mcp         # Windows
+dv mcp install
+```
+
+`dv mcp install` finds the AI apps on your computer, connects dv to each, and checks the
+connection works before saying so. Then restart the app (in an editor: reload the window)
+and ask *"check my dv setup"*.
+
+```bash
+dv mcp status       # which apps dv is connected to
+dv mcp uninstall    # disconnect it again
+dv mcp install --client cursor   # just one app: claude-code, claude-desktop, cursor
+```
+
+Once connected, the app calls dv's commands as tools (`gh_pr_list`,
+`vercel_deploy_redeploy`, `gmail_send`, …) instead of typing shell commands. Reads are
+marked read-only and writes destructive, so you can auto-approve every read and still be
+asked about each write.
+
+**Claude Code plugin** (MCP server and skill together), once this repo is on GitHub:
+
+```text
+/plugin marketplace add <owner>/<repo>
+/plugin install dv@dv
 ```
 
 Every tool call runs dv as a child process, so nothing is bypassed: policy rules are
