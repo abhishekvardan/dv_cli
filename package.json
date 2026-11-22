@@ -3,6 +3,12 @@
   "version": "0.10.2",
   "description": "One CLI and MCP server for GitHub, Vercel, Supabase, Gmail, Calendar and LinkedIn - with OAuth built in, an undo journal, and cross-service workflows.",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abhishekvardan/dv_cli.git"
+  },
+  "homepage": "https://github.com/abhishekvardan/dv_cli#readme",
+  "bugs": "https://github.com/abhishekvardan/dv_cli/issues",
   "bin": {
     "dv": "dist/index.js"
   },

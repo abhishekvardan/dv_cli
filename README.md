@@ -36,12 +36,15 @@ Once connected, the app calls dv's commands as tools (`gh_pr_list`,
 marked read-only and writes destructive, so you can auto-approve every read and still be
 asked about each write.
 
-**Claude Code plugin** (MCP server and skill together), once this repo is on GitHub:
+**Or as a Claude Code plugin** (MCP server and skill together). Type these in Claude Code:
 
 ```text
-/plugin marketplace add <owner>/<repo>
+/plugin marketplace add abhishekvardan/dv_cli
 /plugin install dv@dv
 ```
+
+Then reload the window, or start a new session. The plugin uses the dv installed
+with npm if there is one, and fetches it with npx otherwise.
 
 Every tool call runs dv as a child process, so nothing is bypassed: policy rules are
 checked first, every write is journaled (`journal`, `undo` tools), and the exit code is
