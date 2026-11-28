@@ -135,6 +135,7 @@ export const BUILT_IN: Record<string, ProviderDef> = {
       'https://www.googleapis.com/auth/calendar.readonly',
       'https://www.googleapis.com/auth/youtube.upload',
       'https://www.googleapis.com/auth/youtube',
+      'https://www.googleapis.com/auth/yt-analytics.readonly',
     ],
     authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
     tokenUrl: 'https://oauth2.googleapis.com/token',

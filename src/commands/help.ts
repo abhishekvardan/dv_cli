@@ -118,6 +118,10 @@ const SECTIONS: Array<{ title: string; rows: Array<[string, string]> }> = [
       ['dv yt upload <file> --title …', 'Upload (asks first); --publish-at schedules it'],
       ['dv yt status <id>', 'Privacy, schedule and processing state'],
       ['dv yt rm <id>', 'Delete a video (asks first)'],
+      ['dv yt tag <id> --project --format', 'Label a video so the planner can learn from it'],
+      ['dv yt stats [--days 28]', 'Views, retention, CTR, subs and reward per video'],
+      ['dv yt reach setup', 'Start the daily CTR report (once)'],
+      ['dv yt learn [--slots 7]', 'Plan the next videos from what worked'],
     ],
   },
   {

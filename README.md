@@ -296,6 +296,20 @@ enable "YouTube Data API v3" on the Cloud project that holds the OAuth client. `
 private, and YouTube makes it public at that time. Every upload is journaled, so `dv undo` deletes it. Google may
 lock uploads from an unaudited API project to private, so check the video in Studio after the first upload.
 
+Learning what works:
+
+```bash
+dv yt tag <videoId> --project dv --format tutorial --short   # or --project/--format on upload
+dv yt stats              # views, average % viewed, CTR, subs gained and a 0..1 reward per video
+dv yt reach setup        # once: starts the daily impressions/CTR report (about 2 days behind)
+dv yt learn --slots 7    # plans the next videos by Thompson sampling over project × format
+```
+
+`dv yt learn` scores each video against fixed anchors (retention matters most for Shorts, CTR also
+counts for long videos), ignores videos younger than 72 h or under 20 views, and keeps exploring
+untried project × format pairs. It needs the YouTube Analytics and YouTube Reporting APIs enabled
+on the same Cloud project.
+
 ### Vercel
 
 ```bash

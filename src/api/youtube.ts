@@ -51,11 +51,14 @@ async function googleError(res: Response): Promise<never> {
   const message = err?.message ?? res.statusText;
   if (res.status === 401) throw new AuthError('Google rejected the credential.', 'dv auth login google');
   if (reason === 'accessNotConfigured' || /has not been used in project|is disabled/i.test(message)) {
+    // The message names the API that is off, e.g. "YouTube Analytics API has not been used in project …".
+    const which = /(YouTube [A-Za-z ]*?API(?: v\d)?)/.exec(message)?.[1] ?? 'A YouTube API';
+    const host = /apis\/api\/([a-z.]+googleapis\.com)/.exec(message)?.[1] ?? 'youtube.googleapis.com';
     throw new ProviderError(
-      'The YouTube Data API is not enabled on your Google Cloud project.',
+      `${which} is not enabled on your Google Cloud project.`,
       res.status,
-      'Enable "YouTube Data API v3" at https://console.cloud.google.com/apis/library/youtube.googleapis.com\n' +
-        '(same project as dv\'s Google OAuth client), wait a minute, then retry.',
+      `Enable it at https://console.cloud.google.com/apis/library/${host}\n` +
+        "(same project as dv's Google OAuth client), wait a minute, then retry.",
     );
   }
   if (res.status === 403 && /insufficient|scope/i.test(message + reason)) {
@@ -192,5 +195,141 @@ export const youtube = {
   async remove(videoId: string): Promise<void> {
     const res = await authed(`${API}/videos?id=${encodeURIComponent(videoId)}`, { method: 'DELETE' });
     if (!res.ok && res.status !== 404) await googleError(res);
+  },
+};
+
+/* ───────────────────────── Analytics (views, retention) ───────────────────────── */
+
+const ANALYTICS = 'https://youtubeanalytics.googleapis.com/v2/reports';
+const REPORTING = 'https://youtubereporting.googleapis.com/v1';
+
+export const ANALYTICS_METRICS = [
+  'views',
+  'estimatedMinutesWatched',
+  'averageViewDuration',
+  'averageViewPercentage',
+  'likes',
+  'shares',
+  'comments',
+  'subscribersGained',
+] as const;
+
+export interface VideoAnalytics {
+  videoId: string;
+  views: number;
+  minutesWatched: number;
+  avgViewDuration: number;
+  avgViewPct: number;
+  likes: number;
+  shares: number;
+  comments: number;
+  subscribersGained: number;
+}
+
+/** Turn an Analytics API response (columnHeaders + rows) into objects. Exported for tests. */
+export function analyticsRows(body: any): VideoAnalytics[] {
+  const cols: string[] = (body?.columnHeaders ?? []).map((h: any) => h.name);
+  const at = (name: string) => cols.indexOf(name);
+  return (body?.rows ?? []).map((r: any[]) => {
+    const n = (name: string) => Number(r[at(name)] ?? 0) || 0;
+    return {
+      videoId: String(r[at('video')]),
+      views: n('views'),
+      minutesWatched: n('estimatedMinutesWatched'),
+      avgViewDuration: n('averageViewDuration'),
+      avgViewPct: n('averageViewPercentage'),
+      likes: n('likes'),
+      shares: n('shares'),
+      comments: n('comments'),
+      subscribersGained: n('subscribersGained'),
+    };
+  });
+}
+
+export async function videoAnalytics(startDate: string, endDate: string): Promise<VideoAnalytics[]> {
+  const q = new URLSearchParams({
+    ids: 'channel==MINE',
+    startDate,
+    endDate,
+    dimensions: 'video',
+    metrics: ANALYTICS_METRICS.join(','),
+    sort: '-views',
+    maxResults: '200',
+  });
+  const res = await authed(`${ANALYTICS}?${q}`);
+  if (!res.ok) await googleError(res);
+  return analyticsRows(await res.json());
+}
+
+/* ───────────────────────── Reach (impressions, CTR) ───────────────────────── */
+
+export const REACH_REPORT = 'channel_reach_basic_a1';
+
+export interface Reach {
+  videoId: string;
+  impressions: number;
+  /** 0..1 */
+  ctr: number;
+}
+
+/** Parse reach CSVs and combine days per video; CTR is impression-weighted. Exported for tests. */
+export function parseReachCsv(csvs: string[]): Reach[] {
+  const acc = new Map<string, { imp: number; clicks: number }>();
+  for (const csv of csvs) {
+    const lines = csv.trim().split(/\r?\n/);
+    if (lines.length < 2) continue;
+    const head = lines[0]!.split(',');
+    const vi = head.indexOf('video_id');
+    const ii = head.indexOf('video_thumbnail_impressions');
+    const ci = head.indexOf('video_thumbnail_impressions_ctr');
+    if (vi < 0 || ii < 0 || ci < 0) continue;
+    for (const line of lines.slice(1)) {
+      const f = line.split(',');
+      const imp = Number(f[ii]) || 0;
+      let ctr = Number(f[ci]) || 0;
+      // The report states CTR as a fraction; tolerate a percentage too.
+      if (ctr > 1) ctr /= 100;
+      const a = acc.get(f[vi]!) ?? { imp: 0, clicks: 0 };
+      a.imp += imp;
+      a.clicks += imp * ctr;
+      acc.set(f[vi]!, a);
+    }
+  }
+  return [...acc].map(([videoId, a]) => ({ videoId, impressions: a.imp, ctr: a.imp ? a.clicks / a.imp : 0 }));
+}
+
+export const reach = {
+  async findJob(): Promise<string | undefined> {
+    const res = await authed(`${REPORTING}/jobs`);
+    if (!res.ok) await googleError(res);
+    const jobs: any[] = ((await res.json()) as any)?.jobs ?? [];
+    return jobs.find((j) => j.reportTypeId === REACH_REPORT)?.id;
+  },
+
+  async createJob(): Promise<string> {
+    const existing = await reach.findJob();
+    if (existing) return existing;
+    const res = await authed(`${REPORTING}/jobs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reportTypeId: REACH_REPORT, name: 'dv reach' }),
+    });
+    if (!res.ok) await googleError(res);
+    return String(((await res.json()) as any).id);
+  },
+
+  /** Every report the job has produced since `since`, downloaded as CSV text. */
+  async download(jobId: string, since?: string): Promise<{ count: number; csvs: string[] }> {
+    const q = since ? `?startTimeAtOrAfter=${encodeURIComponent(since)}` : '';
+    const res = await authed(`${REPORTING}/jobs/${jobId}/reports${q}`);
+    if (!res.ok) await googleError(res);
+    const reports: any[] = ((await res.json()) as any)?.reports ?? [];
+    const csvs: string[] = [];
+    for (const r of reports) {
+      const d = await authed(String(r.downloadUrl));
+      if (!d.ok) await googleError(d);
+      csvs.push(await d.text());
+    }
+    return { count: reports.length, csvs };
   },
 };
