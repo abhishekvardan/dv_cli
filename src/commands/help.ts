@@ -109,6 +109,8 @@ const SECTIONS: Array<{ title: string; rows: Array<[string, string]> }> = [
     rows: [
       ['dv li me', 'Your LinkedIn identity'],
       ['dv li post --text ...', 'Post to LinkedIn (asks first)'],
+      ['dv li post --video f.mp4 --at "…"', 'Post a video, now or at a set time'],
+      ['dv later', 'Posts scheduled on this machine; dv later cancel <id>'],
     ],
   },
   {

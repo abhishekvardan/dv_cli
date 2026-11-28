@@ -14,6 +14,8 @@
  * cannot get is reported as unavailable rather than filled in.
  */
 
+import { readFileSync } from 'node:fs';
+
 import { AuthError, ProviderError } from '../cli/errors.js';
 import { accessToken } from '../auth/tokens.js';
 
@@ -145,5 +147,88 @@ export const linkedin = {
       id,
       url: id ? `https://www.linkedin.com/feed/update/${id}` : undefined,
     };
+  },
+
+  /**
+   * Post text with a native video: register an upload, PUT the bytes, wait until
+   * LinkedIn has processed the asset, then publish a VIDEO share that points at it.
+   * All of it works with `w_member_social` on the standard tier.
+   */
+  async shareVideo(input: {
+    text: string;
+    file: string;
+    title?: string;
+    visibility?: 'PUBLIC' | 'CONNECTIONS';
+    onProgress?: (msg: string) => void;
+  }) {
+    const me = await this.me();
+    const author = `urn:li:person:${me.sub}`;
+    const say = input.onProgress ?? (() => {});
+
+    const reg = await call('/v2/assets?action=registerUpload', {
+      method: 'POST',
+      body: JSON.stringify({
+        registerUploadRequest: {
+          recipes: ['urn:li:digitalmediaRecipe:feedshare-video'],
+          owner: author,
+          serviceRelationships: [{ relationshipType: 'OWNER', identifier: 'urn:li:userGeneratedContent' }],
+        },
+      }),
+    });
+    const asset: string = reg?.value?.asset;
+    const uploadUrl: string =
+      reg?.value?.uploadMechanism?.['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest']?.uploadUrl;
+    if (!asset || !uploadUrl) throw new ProviderError('LinkedIn did not return an upload slot for the video.', 502);
+
+    say('uploading video…');
+    const put = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${await accessToken('linkedin')}`, 'Content-Type': 'application/octet-stream' },
+      body: readFileSync(input.file),
+    });
+    if (!put.ok) throw new ProviderError(`LinkedIn video upload failed: ${put.status} ${put.statusText}`, put.status);
+
+    // Processing usually takes seconds to a couple of minutes.
+    say('waiting for LinkedIn to process it…');
+    const assetId = asset.split(':').pop()!;
+    const deadline = Date.now() + 10 * 60_000;
+    for (;;) {
+      const a = await call(`/v2/assets/${encodeURIComponent(assetId)}`);
+      const status = a?.recipes?.[0]?.status;
+      if (status === 'AVAILABLE') break;
+      if (status === 'PROCESSING_FAILED' || status === 'CLIENT_ERROR') {
+        throw new ProviderError(`LinkedIn could not process the video (${status}).`, 502);
+      }
+      if (Date.now() > deadline) throw new ProviderError('LinkedIn is still processing the video after 10 minutes.', 504);
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+
+    const body = {
+      author,
+      lifecycleState: 'PUBLISHED',
+      specificContent: {
+        'com.linkedin.ugc.ShareContent': {
+          shareCommentary: { text: input.text },
+          shareMediaCategory: 'VIDEO',
+          media: [{ status: 'READY', media: asset, ...(input.title ? { title: { text: input.title } } : {}) }],
+        },
+      },
+      visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': input.visibility ?? 'PUBLIC' },
+    };
+    const res = await fetch(`${BASE}/v2/ugcPosts`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${await accessToken('linkedin')}`,
+        'Content-Type': 'application/json',
+        'X-Restli-Protocol-Version': '2.0.0',
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err: any = await res.json().catch(() => ({}));
+      throw new ProviderError(`LinkedIn ${res.status}: ${err?.message ?? res.statusText}`, res.status);
+    }
+    const id = res.headers.get('x-restli-id') ?? undefined;
+    return { id, url: id ? `https://www.linkedin.com/feed/update/${id}` : undefined };
   },
 };

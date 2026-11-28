@@ -17,7 +17,7 @@ import { authCommand } from './commands/auth.js';
 import { configCommand } from './commands/config.js';
 import { ghCommand } from './commands/gh.js';
 import { calendarCommand, gmailCommand } from './commands/gmail.js';
-import { linkedinCommand } from './commands/misc.js';
+import { laterCommand, linkedinCommand } from './commands/misc.js';
 import { youtubeCommand } from './commands/youtube.js';
 import { vercelCommand } from './commands/vercel.js';
 import { shipCommand } from './commands/ship.js';
@@ -77,6 +77,7 @@ const COMMANDS: Record<string, Handler> = {
   journal: journalCommand,
   history: journalCommand,
   undo: undoCommand,
+  later: laterCommand,
   policy: policyCommand,
   watch: watchCommand,
   // Ships with the package, so an assistant can be taught to use this CLI properly

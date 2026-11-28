@@ -180,6 +180,8 @@ export const MCP_EXTRA: McpCommand[] = [
       { name: 'text', describe: 'the post text', required: true },
       { name: 'url', describe: 'a link to attach' },
       { name: 'connections', describe: 'connections only rather than public', kind: 'boolean' },
+      { name: 'video', describe: 'path to a video file to post natively' },
+      { name: 'at', describe: 'post later at this local time, e.g. "2026-11-29 18:00" (this PC must be on)' },
     ],
     mutates: true,
     danger: 'high',

@@ -12,6 +12,7 @@
 
 import { vercel } from '../api/vercel.js';
 import { youtube } from '../api/youtube.js';
+import { cancelLater } from './later.js';
 import { CliError, EXIT } from './errors.js';
 import { registerUndo } from './journal.js';
 import { dropSecret, retrieveSecret } from './vault.js';
@@ -83,4 +84,8 @@ registerUndo('vercel.drain.remove', async (args) => {
 
 registerUndo('youtube.video.delete', async (args) => {
   await youtube.remove(String(args.videoId));
+});
+
+registerUndo('later.cancel', async (args) => {
+  cancelLater(String(args.id));
 });
