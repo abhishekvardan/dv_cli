@@ -122,7 +122,7 @@ export const BUILT_IN: Record<string, ProviderDef> = {
 
   google: {
     id: 'google',
-    label: 'Google (Gmail, Calendar)',
+    label: 'Google (Gmail, Calendar, YouTube)',
     // Google offers no device flow for Gmail or Calendar scopes.
     methods: ['loopback'],
     scopes: [
@@ -133,6 +133,8 @@ export const BUILT_IN: Record<string, ProviderDef> = {
       'https://www.googleapis.com/auth/gmail.send',
       'https://www.googleapis.com/auth/calendar.events',
       'https://www.googleapis.com/auth/calendar.readonly',
+      'https://www.googleapis.com/auth/youtube.upload',
+      'https://www.googleapis.com/auth/youtube',
     ],
     authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
     tokenUrl: 'https://oauth2.googleapis.com/token',

@@ -188,6 +188,32 @@ export const MCP_EXTRA: McpCommand[] = [
     needs: 'linkedin',
   },
 
+  { id: 'yt me', purpose: `Your YouTube channel ${via}.`, needs: 'google' },
+  {
+    id: 'yt upload',
+    purpose: `Upload a video to YouTube ${via}. With publish-at it stays private and goes public at that time.`,
+    params: [
+      { positional: true, name: 'file', describe: 'path to the video file', required: true },
+      { name: 'title', describe: 'video title (max 100 chars)', required: true },
+      { name: 'description-file', describe: 'path to a text file with the description' },
+      { name: 'description', describe: 'description text' },
+      { name: 'tags', describe: 'comma-separated tags' },
+      { name: 'thumbnail', describe: 'path to a PNG/JPG thumbnail' },
+      { name: 'publish-at', describe: 'when it goes public, e.g. "2026-11-29 18:00" (local time)' },
+      { name: 'privacy', describe: 'private, unlisted or public (ignored with publish-at)' },
+    ],
+    mutates: true,
+    danger: 'high',
+    effect: 'publish a video on your YouTube channel',
+    needs: 'google',
+  },
+  {
+    id: 'yt status',
+    purpose: `Privacy, scheduled time and processing state of one YouTube video ${via}.`,
+    params: [{ positional: true, name: 'id', describe: 'video id', required: true }],
+    needs: 'google',
+  },
+
   // ── github, writes beyond the catalogue ───────────────────────────────────
   {
     id: 'gh pr create',

@@ -112,6 +112,15 @@ const SECTIONS: Array<{ title: string; rows: Array<[string, string]> }> = [
     ],
   },
   {
+    title: 'YouTube',
+    rows: [
+      ['dv yt me', 'Your channel'],
+      ['dv yt upload <file> --title …', 'Upload (asks first); --publish-at schedules it'],
+      ['dv yt status <id>', 'Privacy, schedule and processing state'],
+      ['dv yt rm <id>', 'Delete a video (asks first)'],
+    ],
+  },
+  {
     title: 'Vercel',
     rows: [
       ['dv vercel link', 'Link this folder to a project (asks which)'],

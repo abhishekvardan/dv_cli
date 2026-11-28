@@ -18,6 +18,7 @@ import { configCommand } from './commands/config.js';
 import { ghCommand } from './commands/gh.js';
 import { calendarCommand, gmailCommand } from './commands/gmail.js';
 import { linkedinCommand } from './commands/misc.js';
+import { youtubeCommand } from './commands/youtube.js';
 import { vercelCommand } from './commands/vercel.js';
 import { shipCommand } from './commands/ship.js';
 import { dbCommand } from './commands/db.js';
@@ -47,6 +48,8 @@ const COMMANDS: Record<string, Handler> = {
   calendar: calendarCommand,
   li: linkedinCommand,
   linkedin: linkedinCommand,
+  yt: youtubeCommand,
+  youtube: youtubeCommand,
   vercel: vercelCommand,
   // The generic pair: `connect` defines a service, `api` calls it. Between them any
   // HTTP API is reachable without this CLI needing to know about it in advance.

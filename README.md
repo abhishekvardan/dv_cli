@@ -281,6 +281,21 @@ need a LinkedIn *partner* agreement, so the CLI says they are unavailable rather
 filling them in. `dv li posts` refuses outright instead of returning an empty list
 that would read as "you have no posts".
 
+### YouTube
+
+```bash
+dv yt me
+dv yt upload video.mp4 --title "Launch" --description-file desc.txt \
+  --tags "cli,devtools" --thumbnail thumb.jpg --publish-at "2026-11-29 18:00"
+dv yt status <videoId>
+dv yt rm <videoId>
+```
+
+This uses the same Google login, which now also asks for YouTube access. Run `dv auth login google` again, and
+enable "YouTube Data API v3" on the Cloud project that holds the OAuth client. `--publish-at` uploads the video as
+private, and YouTube makes it public at that time. Every upload is journaled, so `dv undo` deletes it. Google may
+lock uploads from an unaudited API project to private, so check the video in Studio after the first upload.
+
 ### Vercel
 
 ```bash
